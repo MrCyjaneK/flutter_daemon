@@ -43,7 +43,11 @@ Future<void> backgroundSync() async {
   print("- DartPluginRegistrant.ensureInitialized()");
   DartPluginRegistrant.ensureInitialized();
   print("- FlutterDaemon.markBackgroundSync()");
-  await FlutterDaemon.markBackgroundSync();
+  final val = await FlutterDaemon.markBackgroundSync();
+  if (val) {
+    print("Background sync already in progress");
+    return;
+  }
   int tick = 0;
   int maxTicks = 36000;
   while (true) {

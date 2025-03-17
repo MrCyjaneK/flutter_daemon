@@ -6,6 +6,7 @@ import 'dart:async';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_daemon/flutter_daemon.dart';
+import 'package:path_provider/path_provider.dart';
 final _flutterDaemonPlugin = FlutterDaemon();
 
 Future<void> main() async {
@@ -22,9 +23,20 @@ Future<void> backgroundSync() async {
   print("- DartPluginRegistrant.ensureInitialized()");
   DartPluginRegistrant.ensureInitialized();
   print("- FlutterDaemon.markBackgroundSync()");
-  await FlutterDaemon.markBackgroundSync();
+  final val = await FlutterDaemon.markBackgroundSync();
+  if (val) {
+    print("Background sync already in progress");
+    return;
+  }
   int tick = 0;
   int maxTicks = 36000;
+  print("path provider test");
+  try {
+    final path = await getApplicationDocumentsDirectory();
+    print("path: ${path.path}");
+  } catch (e) {
+    print("Error: $e");
+  }
   while (true) {
     print("Tick: ${tick++}");
     sleep(Duration(seconds: 1));

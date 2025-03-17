@@ -123,12 +123,18 @@ class BackgroundSyncWorker(appContext: Context, workerParams: WorkerParameters) 
         try {
           val flutterEngine = FlutterEngine(applicationContext)
           
+          FlutterMain.startInitialization(applicationContext)
+          FlutterMain.ensureInitializationComplete(applicationContext, null)
+          
           val appBundlePath = FlutterMain.findAppBundlePath(applicationContext)
           
           if (appBundlePath != null) {
             flutterEngine.dartExecutor.executeDartEntrypoint(
                 DartExecutor.DartEntrypoint(appBundlePath, "backgroundSync")
             )
+            
+            io.flutter.embedding.engine.FlutterEngineCache.getInstance()
+              .put("background_engine", flutterEngine)
           } else {
             android.util.Log.e("FlutterDaemon", "Failed to find app bundle path")
             result = androidx.work.ListenableWorker.Result.failure()

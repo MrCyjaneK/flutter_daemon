@@ -21,7 +21,7 @@ class FlutterDaemon {
     return FlutterDaemonPlatform.instance.getBackgroundSyncStatus();
   }
 
-  static Future<void> markBackgroundSync() async {
+  static Future<bool> markBackgroundSync() async {
     print("Marking background sync");
 
     await Future.delayed(Duration(seconds: 1));
@@ -48,7 +48,7 @@ class FlutterDaemon {
         if (difference.inMinutes < 5) {
           print(
               "Daemon already running (last heartbeat: ${difference.inMinutes} minutes ago)");
-          exit(0);
+          return true;
         }
       } catch (e) {
         print("Error parsing timestamp: $e");
@@ -63,5 +63,6 @@ class FlutterDaemon {
         await Future.delayed(Duration(seconds: 15));
       }
     }));
+    return false;
   }
 }
