@@ -25,7 +25,37 @@ class FlutterDaemon {
     return FlutterDaemonPlatform.instance.getBackgroundSyncInterval();
   }
 
-  static Future<bool> markBackgroundSync() async {
+  Future<bool> isBackgroundSyncActive() async {
+    final Directory tempDir = Directory.systemTemp;
+    print("tempDir: ${tempDir.path}");
+    final String path =
+        p.join(tempDir.path, "flutter_daemon_background", "__daemonfile");
+
+    final directory = Directory(p.dirname(path));
+    if (!directory.existsSync()) {
+      directory.createSync(recursive: true);
+    }
+
+    final statFile = File(path);
+
+    if (statFile.existsSync()) {
+      try {
+        final content = await statFile.readAsString();
+        final lastTimestamp = DateTime.parse(content);
+        final now = DateTime.now();
+        final difference = now.difference(lastTimestamp);
+
+        if (difference.inMinutes < 5) {
+          return true;
+        }
+      } catch (e) {
+        print("Error parsing timestamp: $e");
+      }
+    }
+    return false;
+  }
+
+  Future<bool> markBackgroundSync() async {
     print("Marking background sync");
 
     await Future.delayed(Duration(seconds: 1));

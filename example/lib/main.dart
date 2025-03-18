@@ -23,7 +23,7 @@ Future<void> backgroundSync() async {
   print("- DartPluginRegistrant.ensureInitialized()");
   DartPluginRegistrant.ensureInitialized();
   print("- FlutterDaemon.markBackgroundSync()");
-  final val = await FlutterDaemon.markBackgroundSync();
+  final val = await _flutterDaemonPlugin.markBackgroundSync();
   if (val) {
     print("Background sync already in progress");
     return;
