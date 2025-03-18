@@ -21,6 +21,10 @@ class FlutterDaemon {
     return FlutterDaemonPlatform.instance.getBackgroundSyncStatus();
   }
 
+  Future<int?> getBackgroundSyncInterval() {
+    return FlutterDaemonPlatform.instance.getBackgroundSyncInterval();
+  }
+
   static Future<bool> markBackgroundSync() async {
     print("Marking background sync");
 

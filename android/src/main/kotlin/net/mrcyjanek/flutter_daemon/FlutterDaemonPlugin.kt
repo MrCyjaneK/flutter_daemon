@@ -36,6 +36,10 @@ class FlutterDaemonPlugin: FlutterPlugin, MethodCallHandler {
         try {
           val intervalMinutes = call.argument<Int>("intervalMinutes") ?: 15
           
+          // Store the interval in shared preferences
+          val sharedPreferences = context.getSharedPreferences("flutter_daemon_prefs", Context.MODE_PRIVATE)
+          sharedPreferences.edit().putInt("background_sync_interval", intervalMinutes).apply()
+          
           val syncWorkRequest = PeriodicWorkRequestBuilder<BackgroundSyncWorker>(intervalMinutes.toLong(), TimeUnit.MINUTES)
               .build()
 
@@ -85,6 +89,22 @@ class FlutterDaemonPlugin: FlutterPlugin, MethodCallHandler {
           }, java.util.concurrent.Executors.newSingleThreadExecutor())
         } catch (e: Exception) {
           result.error("BACKGROUND_SYNC_ERROR", "Failed to get background sync status", e.message)
+        }
+      }
+      "getBackgroundSyncInterval" -> {
+        try {
+          // Use shared preferences to store and retrieve the interval
+          val sharedPreferences = context.getSharedPreferences("flutter_daemon_prefs", Context.MODE_PRIVATE)
+          val intervalMinutes = sharedPreferences.getInt("background_sync_interval", -1)
+          
+          if (intervalMinutes == -1) {
+            // No interval stored, meaning no background sync is configured
+            result.success(null)
+          } else {
+            result.success(intervalMinutes)
+          }
+        } catch (e: Exception) {
+          result.error("BACKGROUND_SYNC_ERROR", "Failed to get background sync interval", e.message)
         }
       }
       else -> {

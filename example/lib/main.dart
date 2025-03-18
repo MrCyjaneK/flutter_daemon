@@ -59,7 +59,7 @@ class _MyAppState extends State<MyApp> {
   bool _isSyncActive = false;
   String _statusMessage = '';
   Timer? _statusCheckTimer;
-  int _syncIntervalMinutes = 15;
+  int _syncIntervalMinutes = -1;
 
   @override
   void initState() {
@@ -67,6 +67,12 @@ class _MyAppState extends State<MyApp> {
     initPlatformState();
     _checkBackgroundSyncStatus();
     
+    _flutterDaemonPlugin.getBackgroundSyncInterval().then((value) {
+      setState(() {
+        _syncIntervalMinutes = value ?? -1;
+      });
+    });
+
     _statusCheckTimer = Timer.periodic(
       const Duration(seconds: 5), 
       (_) => _checkBackgroundSyncStatus()
@@ -146,7 +152,7 @@ class _MyAppState extends State<MyApp> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('Running on: $_platformVersion', style: Theme.of(context).textTheme.titleMedium),
+              Text('Running on: $_platformVersion every $_syncIntervalMinutes minutes', style: Theme.of(context).textTheme.titleMedium),
               const SizedBox(height: 24),
               
               Text(

@@ -33,4 +33,9 @@ abstract class FlutterDaemonPlatform extends PlatformInterface {
     throw UnimplementedError(
         'getBackgroundSyncStatus() has not been implemented.');
   }
+
+  Future<int?> getBackgroundSyncInterval() {
+    throw UnimplementedError(
+        'getBackgroundSyncInterval() has not been implemented.');
+  }
 }

@@ -36,4 +36,11 @@ class MethodChannelFlutterDaemon extends FlutterDaemonPlatform {
         await methodChannel.invokeMethod<bool>('getBackgroundSyncStatus');
     return result ?? false;
   }
+
+  @override
+  Future<int?> getBackgroundSyncInterval() async {
+    final result =
+        await methodChannel.invokeMethod<int?>('getBackgroundSyncInterval');
+    return result;
+  }
 }

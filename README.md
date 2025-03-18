@@ -20,15 +20,19 @@ $ dart pub add flutter_daemon --git-url=https://github.com/MrCyjaneK/flutter_dae
 
 ```dart
 Future<String> startBackgroundSync(int intervalMinutes) {
-    return FlutterDaemonPlatform.instance.startBackgroundSync(intervalMinutes);
+    return FlutterDaemon().startBackgroundSync(intervalMinutes);
 }
 
 Future<String> stopBackgroundSync() {
-    return FlutterDaemonPlatform.instance.stopBackgroundSync();
+    return FlutterDaemon().stopBackgroundSync();
 }
 
 Future<bool> getBackgroundSyncStatus() {
-    return FlutterDaemonPlatform.instance.getBackgroundSyncStatus();
+    return FlutterDaemon().getBackgroundSyncStatus();
+}
+
+Future<int?> getBackgroundSyncInterval() {
+    return FlutterDaemon().getBackgroundSyncInterval();
 }
 ```
 
@@ -68,5 +72,4 @@ flutterEngine.dartExecutor.executeDartEntrypoint(
     DartExecutor.DartEntrypoint(appBundlePath, "backgroundSync")
 )
 ```
-
 for example platform channels won't work.
