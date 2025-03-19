@@ -55,15 +55,21 @@ class FlutterDaemon {
     return false;
   }
 
+  final String path = p.join(
+      Directory.systemTemp.path, "flutter_daemon_background", "__daemonfile");
+
+  Future<bool> unmarkBackgroundSync() async {
+    final statFile = File(path);
+    if (statFile.existsSync()) {
+      statFile.deleteSync();
+    }
+    return true;
+  }
+
   Future<bool> markBackgroundSync() async {
     print("Marking background sync");
 
     await Future.delayed(Duration(seconds: 1));
-
-    final Directory tempDir = Directory.systemTemp;
-    print("tempDir: ${tempDir.path}");
-    final String path =
-        p.join(tempDir.path, "flutter_daemon_background", "__daemonfile");
 
     final directory = Directory(p.dirname(path));
     if (!directory.existsSync()) {
@@ -93,6 +99,10 @@ class FlutterDaemon {
 
     unawaited(Isolate.run(() async {
       while (true) {
+        if (!statFile.existsSync()) {
+          print("Stopping background sync");
+          return;
+        }
         await statFile.writeAsString(DateTime.now().toIso8601String());
         await Future.delayed(Duration(seconds: 15));
       }

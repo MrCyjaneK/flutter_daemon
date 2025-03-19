@@ -41,27 +41,38 @@ in `main.dart` you need to add a function that will be called in background
 ```dart
 @pragma('vm:entry-point')
 Future<void> backgroundSync() async {
-  print("Background sync triggered");
-  print("- WidgetsFlutterBinding.ensureInitialized()");
-  WidgetsFlutterBinding.ensureInitialized();
-  print("- DartPluginRegistrant.ensureInitialized()");
-  DartPluginRegistrant.ensureInitialized();
-  print("- FlutterDaemon.markBackgroundSync()");
-  final val = await FlutterDaemon.markBackgroundSync();
-  if (val) {
-    print("Background sync already in progress");
-    return;
-  }
-  int tick = 0;
-  int maxTicks = 36000;
-  while (true) {
-    print("Tick: ${tick++}");
-    sleep(Duration(seconds: 1));
-    if (tick >= maxTicks) {
-      break;
+  try {
+    print("Background sync triggered");
+    print("- WidgetsFlutterBinding.ensureInitialized()");
+    WidgetsFlutterBinding.ensureInitialized();
+    print("- DartPluginRegistrant.ensureInitialized()");
+    DartPluginRegistrant.ensureInitialized();
+    print("- FlutterDaemon.markBackgroundSync()");
+    final val = await _flutterDaemonPlugin.markBackgroundSync();
+    if (val) {
+      print("Background sync already in progress");
+      return;
     }
+    int tick = 0;
+    int maxTicks = 600;
+    print("path provider test");
+    try {
+      final path = await getApplicationDocumentsDirectory();
+      print("path: ${path.path}");
+    } catch (e) {
+      print("Error: $e");
+    }
+    while (tick < maxTicks) {
+      print("Tick: ${tick++}");
+      sleep(Duration(seconds: 1));
+      if (tick >= maxTicks) {
+        break;
+      }
+    }
+    print("Background sync completed");
+  } finally {
+    _flutterDaemonPlugin.unmarkBackgroundSync();
   }
-  print("Background sync completed");
 }
 ```
 
