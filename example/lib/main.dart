@@ -194,7 +194,7 @@ class _MyAppState extends State<MyApp> {
                   DropdownButton<int>(
                     value: _syncIntervalMinutes,
                     items:
-                        [15, 30, 60, 120, 180, 360, 720, 1440].map((int value) {
+                        [-1, 15, 30, 60, 120, 180, 360, 720, 1440].map((int value) {
                       return DropdownMenuItem<int>(
                         value: value,
                         child: Text(

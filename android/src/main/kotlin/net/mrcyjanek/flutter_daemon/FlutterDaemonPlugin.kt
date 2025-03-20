@@ -16,6 +16,8 @@ import io.flutter.plugin.common.MethodChannel.MethodCallHandler
 import io.flutter.plugin.common.MethodChannel.Result
 import io.flutter.view.FlutterMain
 import java.util.concurrent.TimeUnit
+import androidx.work.Constraints
+import androidx.work.NetworkType
 
 class FlutterDaemonPlugin: FlutterPlugin, MethodCallHandler {
   private lateinit var channel : MethodChannel
@@ -35,12 +37,16 @@ class FlutterDaemonPlugin: FlutterPlugin, MethodCallHandler {
       "startBackgroundSync" -> {
         try {
           val intervalMinutes = call.argument<Int>("intervalMinutes") ?: 15
-          
+          val constraints = Constraints.Builder()
+            .setRequiredNetworkType(NetworkType.UNMETERED)
+            .setRequiresCharging(true)
+            .build()
           // Store the interval in shared preferences
           val sharedPreferences = context.getSharedPreferences("flutter_daemon_prefs", Context.MODE_PRIVATE)
           sharedPreferences.edit().putInt("background_sync_interval", intervalMinutes).apply()
           
           val syncWorkRequest = PeriodicWorkRequestBuilder<BackgroundSyncWorker>(intervalMinutes.toLong(), TimeUnit.MINUTES)
+              .setConstraints(constraints)
               .build()
 
           WorkManager.getInstance(context).enqueueUniquePeriodicWork(
