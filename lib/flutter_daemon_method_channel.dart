@@ -43,4 +43,25 @@ class MethodChannelFlutterDaemon extends FlutterDaemonPlatform {
         await methodChannel.invokeMethod<int?>('getBackgroundSyncInterval');
     return result;
   }
+
+  @override
+  Future<bool> isBatteryOptimizationDisabled() async {
+    final result =
+        await methodChannel.invokeMethod<bool>('isBatteryOptimizationDisabled');
+    return result ?? false;
+  }
+
+  @override
+  Future<bool> requestDisableBatteryOptimization() async {
+    final result =
+        await methodChannel.invokeMethod<bool>('requestDisableBatteryOptimization');
+    return result ?? false;
+  }
+
+  @override
+  Future<bool> openBatteryOptimizationSettings() async {
+    final result =
+        await methodChannel.invokeMethod<bool>('openBatteryOptimizationSettings');
+    return result ?? false;
+  }
 }

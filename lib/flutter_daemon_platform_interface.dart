@@ -38,4 +38,19 @@ abstract class FlutterDaemonPlatform extends PlatformInterface {
     throw UnimplementedError(
         'getBackgroundSyncInterval() has not been implemented.');
   }
+
+  Future<bool> isBatteryOptimizationDisabled() {
+    throw UnimplementedError(
+        'isBatteryOptimizationDisabled() has not been implemented.');
+  }
+
+  Future<bool> requestDisableBatteryOptimization() {
+    throw UnimplementedError(
+        'requestDisableBatteryOptimization() has not been implemented.');
+  }
+
+  Future<bool> openBatteryOptimizationSettings() {
+    throw UnimplementedError(
+        'openBatteryOptimizationSettings() has not been implemented.');
+  }
 }

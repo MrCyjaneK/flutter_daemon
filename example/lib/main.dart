@@ -9,6 +9,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_daemon/flutter_daemon.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:http/http.dart' as http;
+import 'package:web_socket_channel/web_socket_channel.dart';
+
 final _flutterDaemonPlugin = FlutterDaemon();
 
 Future<void> main() async {
@@ -18,7 +20,10 @@ Future<void> main() async {
 }
 
 Future<void> _checkNetworkLoop() async {
-  while (true) {
+  final wsStop = _testWebSocketConnection();
+  await Future.delayed(const Duration(seconds: 60));
+  await wsStop();
+  for (int i = 0; i < 60; i++) {
     try {
       await _checkNetwork();
     } catch (e) {
@@ -69,6 +74,8 @@ Future<void> backgroundSync() async {
     } catch (e) {
       print("Error: $e");
     }
+    await _checkNetworkLoop();
+
     while (tick < maxTicks) {
       print("Tick: ${tick++}");
       sleep(Duration(seconds: 1));
@@ -80,6 +87,54 @@ Future<void> backgroundSync() async {
     print("Background sync completed");
   } finally {
     _flutterDaemonPlugin.unmarkBackgroundSync();
+  }
+}
+
+Function _testWebSocketConnection() {
+  final wsUrl = Uri.parse('wss://echo.websocket.org');
+  WebSocketChannel? channel;
+  Timer? timer;
+  
+  try {
+    // Initialize the connection
+    channel = WebSocketChannel.connect(wsUrl);
+    print("WebSocket connection initiated to echo.websocket.org");
+    
+    // Listen for messages from the server
+    channel.stream.listen(
+      (message) {
+        print("WebSocket echo received: $message");
+      },
+      onError: (error) {
+        print("WebSocket error: $error");
+        timer?.cancel();
+        channel?.sink.close();
+      },
+      onDone: () {
+        print("WebSocket connection closed");
+        timer?.cancel();
+      },
+    );
+    
+    int messageCount = 0;
+    timer = Timer.periodic(const Duration(milliseconds: 750), (_) {
+      if (channel?.sink != null) {
+        final message = "Test message ${messageCount++}";
+        channel?.sink.add(message);
+        print("WebSocket message sent: $message");
+      }
+    });
+    
+    return () {
+      print("Stopping WebSocket connection test");
+      timer?.cancel();
+      channel?.sink.close();
+    };
+  } catch (e) {
+    print("Error establishing WebSocket connection: $e");
+    timer?.cancel();
+    channel?.sink.close();
+    return () {};
   }
 }
 
@@ -96,12 +151,14 @@ class _MyAppState extends State<MyApp> {
   String _statusMessage = '';
   Timer? _statusCheckTimer;
   int _syncIntervalMinutes = -1;
+  bool _isBatteryOptDisabled = false;
 
   @override
   void initState() {
     super.initState();
     initPlatformState();
     _checkBackgroundSyncStatus();
+    _checkBatteryOptimizationStatus();
 
     _flutterDaemonPlugin.getBackgroundSyncInterval().then((value) {
       setState(() {
@@ -172,6 +229,47 @@ class _MyAppState extends State<MyApp> {
           _statusMessage = 'Status check error: $e';
         });
       }
+    }
+  }
+
+  Future<void> _checkBatteryOptimizationStatus() async {
+    try {
+      final isDisabled = await _flutterDaemonPlugin.isBatteryOptimizationDisabled();
+      if (mounted) {
+        setState(() {
+          _isBatteryOptDisabled = isDisabled;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _statusMessage = 'Battery optimization check error: $e';
+        });
+      }
+    }
+  }
+
+  Future<void> _requestDisableBatteryOptimization() async {
+    try {
+      await _flutterDaemonPlugin.requestDisableBatteryOptimization();
+      for (int i = 0; i < 4 * 60; i++) {
+        await _checkBatteryOptimizationStatus();
+        await Future.delayed(const Duration(milliseconds: 250));
+      }
+    } catch (e) {
+      setState(() {
+        _statusMessage = 'Error requesting battery optimization: $e';
+      });
+    }
+  }
+
+  Future<void> _openBatteryOptimizationSettings() async {
+    try {
+      await _flutterDaemonPlugin.openBatteryOptimizationSettings();
+    } catch (e) {
+      setState(() {
+        _statusMessage = 'Error opening battery settings: $e';
+      });
     }
   }
 
@@ -259,6 +357,42 @@ class _MyAppState extends State<MyApp> {
               OutlinedButton(
                 onPressed: _checkBackgroundSyncStatus,
                 child: const Text('Refresh Status'),
+              ),
+              const SizedBox(height: 24),
+              Text('Battery Optimization',
+                  style: Theme.of(context).textTheme.titleLarge),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Container(
+                    width: 12,
+                    height: 12,
+                    decoration: BoxDecoration(
+                      color: _isBatteryOptDisabled ? Colors.green : Colors.red,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    _isBatteryOptDisabled ? 'Disabled' : 'Enabled',
+                    style: Theme.of(context).textTheme.bodyLarge,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              ElevatedButton(
+                onPressed: _requestDisableBatteryOptimization,
+                child: const Text('Request Disable Battery Optimization'),
+              ),
+              const SizedBox(height: 8),
+              OutlinedButton(
+                onPressed: _openBatteryOptimizationSettings,
+                child: const Text('Open Battery Settings'),
+              ),
+              const SizedBox(height: 8),
+              OutlinedButton(
+                onPressed: _checkBatteryOptimizationStatus,
+                child: const Text('Refresh Battery Status'),
               ),
             ],
           ),

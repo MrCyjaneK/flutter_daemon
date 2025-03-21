@@ -25,6 +25,18 @@ class FlutterDaemon {
     return FlutterDaemonPlatform.instance.getBackgroundSyncInterval();
   }
 
+  Future<bool> isBatteryOptimizationDisabled() {
+    return FlutterDaemonPlatform.instance.isBatteryOptimizationDisabled();
+  }
+
+  Future<bool> requestDisableBatteryOptimization() {
+    return FlutterDaemonPlatform.instance.requestDisableBatteryOptimization();
+  }
+
+  Future<bool> openBatteryOptimizationSettings() {
+    return FlutterDaemonPlatform.instance.openBatteryOptimizationSettings();
+  }
+
   Future<bool> isBackgroundSyncActive() async {
     final Directory tempDir = Directory.systemTemp;
     print("tempDir: ${tempDir.path}");

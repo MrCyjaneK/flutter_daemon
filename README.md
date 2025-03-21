@@ -34,6 +34,18 @@ Future<bool> getBackgroundSyncStatus() {
 Future<int?> getBackgroundSyncInterval() {
     return FlutterDaemon().getBackgroundSyncInterval();
 }
+
+Future<bool> isBatteryOptimizationDisabled() {
+    return FlutterDaemon().isBatteryOptimizationDisabled();
+}
+
+Future<bool> requestDisableBatteryOptimization() {
+    return FlutterDaemon().requestDisableBatteryOptimization();
+}
+
+Future<bool> openBatteryOptimizationSettings() {
+    return FlutterDaemon().openBatteryOptimizationSettings();
+}
 ```
 
 in `main.dart` you need to add a function that will be called in background
@@ -84,3 +96,15 @@ flutterEngine.dartExecutor.executeDartEntrypoint(
 )
 ```
 for example platform channels won't work.
+
+## Platform-specific settings
+
+### Android
+
+Optional, not required feature if you want to prompt users to disable battery optimizations.
+
+```xml
+<uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
+```
+
+If you don't add this permission then users will be required to do a couple manual steps, open settings, find app name, and manually disable battery optimizations.
