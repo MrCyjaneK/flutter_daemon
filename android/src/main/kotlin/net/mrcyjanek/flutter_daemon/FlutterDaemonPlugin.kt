@@ -18,6 +18,10 @@ import io.flutter.view.FlutterMain
 import java.util.concurrent.TimeUnit
 import androidx.work.Constraints
 import androidx.work.NetworkType
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
+import androidx.work.ForegroundInfo
 
 class FlutterDaemonPlugin: FlutterPlugin, MethodCallHandler {
   private lateinit var channel : MethodChannel
@@ -37,10 +41,12 @@ class FlutterDaemonPlugin: FlutterPlugin, MethodCallHandler {
       "startBackgroundSync" -> {
         try {
           val intervalMinutes = call.argument<Int>("intervalMinutes") ?: 15
+          
+          // Less restrictive constraints - only require network connection
           val constraints = Constraints.Builder()
-            .setRequiredNetworkType(NetworkType.UNMETERED)
-            .setRequiresCharging(true)
+            .setRequiredNetworkType(NetworkType.CONNECTED)
             .build()
+          
           // Store the interval in shared preferences
           val sharedPreferences = context.getSharedPreferences("flutter_daemon_prefs", Context.MODE_PRIVATE)
           sharedPreferences.edit().putInt("background_sync_interval", intervalMinutes).apply()
@@ -127,62 +133,118 @@ class FlutterDaemonPlugin: FlutterPlugin, MethodCallHandler {
 class BackgroundSyncWorker(appContext: Context, workerParams: WorkerParameters) : Worker(appContext, workerParams) {
   companion object {
     private val isRunning = java.util.concurrent.atomic.AtomicBoolean(false)
+    private const val NOTIFICATION_ID = 1337
   }
 
-  override fun doWork(): androidx.work.ListenableWorker.Result {
-    if (isAppInForeground()) {
-      android.util.Log.i("FlutterDaemon", "Skipping background sync as app is in foreground")
-      return androidx.work.ListenableWorker.Result.success()
+  override fun doWork(): Result {
+    try {
+      // Mark the worker as important by converting to a foreground service
+      android.util.Log.i("FlutterDaemon", "Setting foreground service")
+      setForegroundAsync(createForegroundInfo("Running background sync"))
+
+      // if (isAppInForeground()) {
+      //   android.util.Log.i("FlutterDaemon", "Skipping background sync as app is in foreground")
+      //   return Result.success()
+      // }
+      
+      // if (!isRunning.compareAndSet(false, true)) {
+      //   android.util.Log.i("FlutterDaemon", "Skipping background sync as another one is in progress")
+      //   return Result.success()
+      // }
+
+      try {
+        val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+        val latch = java.util.concurrent.CountDownLatch(1)
+        var result: androidx.work.ListenableWorker.Result = androidx.work.ListenableWorker.Result.success()
+        
+        mainHandler.post {
+          try {
+            val flutterEngine = FlutterEngine(applicationContext)
+            
+            FlutterMain.startInitialization(applicationContext)
+            FlutterMain.ensureInitializationComplete(applicationContext, null)
+            
+            val appBundlePath = FlutterMain.findAppBundlePath(applicationContext)
+            
+            if (appBundlePath != null) {
+              flutterEngine.dartExecutor.executeDartEntrypoint(
+                  DartExecutor.DartEntrypoint(appBundlePath, "backgroundSync")
+              )
+              
+              io.flutter.embedding.engine.FlutterEngineCache.getInstance()
+                .put("background_engine", flutterEngine)
+            } else {
+              android.util.Log.e("FlutterDaemon", "Failed to find app bundle path")
+              result = androidx.work.ListenableWorker.Result.failure()
+            }
+          } catch (e: Exception) {
+            android.util.Log.e("FlutterDaemon", "Error executing Flutter task", e)
+            result = androidx.work.ListenableWorker.Result.failure()
+          } finally {
+            latch.countDown()
+          }
+        }
+        
+        try {
+          latch.await(30, java.util.concurrent.TimeUnit.SECONDS)
+        } catch (e: InterruptedException) {
+          android.util.Log.e("FlutterDaemon", "Background sync interrupted", e)
+          return androidx.work.ListenableWorker.Result.failure()
+        }
+        
+        // Give enough time for any important background work to complete
+        Thread.sleep(5000)
+        
+        return result
+      } finally {
+        isRunning.set(false)
+      }
+    } catch (e: Exception) {
+      android.util.Log.e("FlutterDaemon", "Error in background sync", e)
+      return Result.failure()
+    }
+  }
+  
+  private fun createForegroundInfo(progress: String): ForegroundInfo {
+    val context = applicationContext
+    val channelId = "flutter_daemon_channel"
+    val channelName = "Flutter Daemon Service"
+    val title = "Flutter Daemon"
+    val cancel = "Cancel"
+    
+    // Create a notification channel for Android O and above
+    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+      val channel = android.app.NotificationChannel(
+        channelId,
+        channelName,
+        android.app.NotificationManager.IMPORTANCE_LOW
+      )
+      val notificationManager = applicationContext.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+      notificationManager.createNotificationChannel(channel)
     }
     
-    if (!isRunning.compareAndSet(false, true)) {
-      android.util.Log.i("FlutterDaemon", "Skipping background sync as another one is in progress")
-      return androidx.work.ListenableWorker.Result.success()
-    }
-
-    try {
-      val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
-      val latch = java.util.concurrent.CountDownLatch(1)
-      var result: androidx.work.ListenableWorker.Result = androidx.work.ListenableWorker.Result.success()
-      
-      mainHandler.post {
-        try {
-          val flutterEngine = FlutterEngine(applicationContext)
-          
-          FlutterMain.startInitialization(applicationContext)
-          FlutterMain.ensureInitializationComplete(applicationContext, null)
-          
-          val appBundlePath = FlutterMain.findAppBundlePath(applicationContext)
-          
-          if (appBundlePath != null) {
-            flutterEngine.dartExecutor.executeDartEntrypoint(
-                DartExecutor.DartEntrypoint(appBundlePath, "backgroundSync")
-            )
-            
-            io.flutter.embedding.engine.FlutterEngineCache.getInstance()
-              .put("background_engine", flutterEngine)
-          } else {
-            android.util.Log.e("FlutterDaemon", "Failed to find app bundle path")
-            result = androidx.work.ListenableWorker.Result.failure()
-          }
-        } catch (e: Exception) {
-          android.util.Log.e("FlutterDaemon", "Error executing Flutter task", e)
-          result = androidx.work.ListenableWorker.Result.failure()
-        } finally {
-          latch.countDown()
-        }
-      }
-      
-      try {
-        latch.await(30, java.util.concurrent.TimeUnit.SECONDS)
-      } catch (e: InterruptedException) {
-        android.util.Log.e("FlutterDaemon", "Background sync interrupted", e)
-        return androidx.work.ListenableWorker.Result.failure()
-      }
-      
-      return result
-    } finally {
-      isRunning.set(false)
+    // Create a notification for the foreground service
+    val pendingIntent = WorkManager.getInstance(applicationContext)
+        .createCancelPendingIntent(id)
+    
+    val notification = androidx.core.app.NotificationCompat.Builder(applicationContext, channelId)
+        .setContentTitle(title)
+        .setTicker(title)
+        .setContentText(progress)
+        .setSmallIcon(android.R.drawable.ic_popup_sync)
+        .setOngoing(true)
+        .addAction(android.R.drawable.ic_delete, cancel, pendingIntent)
+        .build()
+    
+    // Add the foreground service type to match the manifest declaration
+    return if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+      ForegroundInfo(
+        NOTIFICATION_ID, 
+        notification,
+        android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+      )
+    } else {
+      ForegroundInfo(NOTIFICATION_ID, notification)
     }
   }
   
