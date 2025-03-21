@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
@@ -7,13 +8,42 @@ import 'dart:async';
 import 'package:flutter/services.dart';
 import 'package:flutter_daemon/flutter_daemon.dart';
 import 'package:path_provider/path_provider.dart';
-
+import 'package:http/http.dart' as http;
 final _flutterDaemonPlugin = FlutterDaemon();
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   print("BACKGROUND SYNC TEST");
   runApp(const MyApp());
+}
+
+Future<void> _checkNetworkLoop() async {
+  while (true) {
+    try {
+      await _checkNetwork();
+    } catch (e) {
+      print("Error checking network: $e");
+    }
+    await Future.delayed(const Duration(seconds: 1));
+  }
+}
+
+
+Future<void> _checkNetwork() async {
+  final urls = [
+    "https://connectivitycheck.gstatic.com",
+    "https://static.mrcyjanek.net",
+    "https://getmonero.org",
+    "https://github.com",
+    "https://1.1.1.1/",
+  ];
+  final url = urls[Random().nextInt(urls.length)];
+  try {
+    final response = await http.get(Uri.parse(url));
+    print("Network connection successful (${response.statusCode}) to $url");
+  } catch (e) {
+    print("Error checking network: $url: $e");
+  }
 }
 
 @pragma('vm:entry-point')
@@ -42,6 +72,7 @@ Future<void> backgroundSync() async {
     while (tick < maxTicks) {
       print("Tick: ${tick++}");
       sleep(Duration(seconds: 1));
+      await _checkNetwork();
       if (tick >= maxTicks) {
         break;
       }

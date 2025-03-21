@@ -38,8 +38,7 @@ class FlutterDaemonPlugin: FlutterPlugin, MethodCallHandler {
         try {
           val intervalMinutes = call.argument<Int>("intervalMinutes") ?: 15
           val constraints = Constraints.Builder()
-            .setRequiredNetworkType(NetworkType.UNMETERED)
-            .setRequiresCharging(true)
+            .setRequiredNetworkType(NetworkType.CONNECTED)
             .build()
           // Store the interval in shared preferences
           val sharedPreferences = context.getSharedPreferences("flutter_daemon_prefs", Context.MODE_PRIVATE)
