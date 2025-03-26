@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:isolate';
+import 'dart:math';
+import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'flutter_daemon_platform_interface.dart';
 
@@ -109,14 +111,19 @@ class FlutterDaemon {
       statFile.createSync(recursive: true);
     }
 
+    final rootToken = ServicesBinding.rootIsolateToken;
+    final randomId = Random.secure().nextInt(1000000);
     unawaited(Isolate.run(() async {
+      BackgroundIsolateBinaryMessenger.ensureInitialized(rootToken!);
       while (true) {
         if (!statFile.existsSync()) {
-          print("Stopping background sync");
+          print("[$randomId] Stopping background sync");
+          final channel = MethodChannel('flutter_daemon');
+          await channel.invokeMethod('backgroundSyncComplete');
           return;
         }
         await statFile.writeAsString(DateTime.now().toIso8601String());
-        await Future.delayed(Duration(seconds: 15));
+        await Future.delayed(Duration(seconds: 1));
       }
     }));
     return false;

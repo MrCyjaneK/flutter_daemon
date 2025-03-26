@@ -66,7 +66,7 @@ Future<void> backgroundSync() async {
       return;
     }
     int tick = 0;
-    int maxTicks = 600;
+    int maxTicks = 60;
     print("path provider test");
     try {
       final path = await getApplicationDocumentsDirectory();
@@ -101,6 +101,22 @@ for example platform channels won't work.
 
 ### Android
 
+```xml
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+
+<manifest>
+  <application>
+    <service 
+      android:name="androidx.work.impl.foreground.SystemForegroundService"
+      android:foregroundServiceType="dataSync"
+      android:exported="false" />
+  </application>
+</manifest>
+```
+
 Optional, not required feature if you want to prompt users to disable battery optimizations.
 
 ```xml
@@ -108,3 +124,8 @@ Optional, not required feature if you want to prompt users to disable battery op
 ```
 
 If you don't add this permission then users will be required to do a couple manual steps, open settings, find app name, and manually disable battery optimizations.
+
+## Special thanks
+
+- https://github.com/transistorsoft/transistor-background-fetch
+- https://github.com/transistorsoft/flutter_background_fetch

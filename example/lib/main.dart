@@ -21,7 +21,7 @@ Future<void> main() async {
 
 Future<void> _checkNetworkLoop() async {
   final wsStop = _testWebSocketConnection();
-  await Future.delayed(const Duration(seconds: 60));
+  await Future.delayed(const Duration(seconds: 15));
   await wsStop();
   for (int i = 0; i < 60; i++) {
     try {
@@ -66,7 +66,7 @@ Future<void> backgroundSync() async {
       return;
     }
     int tick = 0;
-    int maxTicks = 600;
+    int maxTicks = 60;
     print("path provider test");
     try {
       final path = await getApplicationDocumentsDirectory();
@@ -86,6 +86,7 @@ Future<void> backgroundSync() async {
     }
     print("Background sync completed");
   } finally {
+    print("Unmarking background sync");
     _flutterDaemonPlugin.unmarkBackgroundSync();
   }
 }
