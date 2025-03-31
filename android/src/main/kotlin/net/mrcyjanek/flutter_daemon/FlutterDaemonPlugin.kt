@@ -361,16 +361,14 @@ class BackgroundSyncWorker(appContext: Context, workerParams: WorkerParameters) 
     android.util.Log.i("FlutterDaemon", "Creating notification channel for foreground service")
     createNotificationChannel()
     
-    // Create a more visible notification
     android.util.Log.i("FlutterDaemon", "Building foreground notification")
     val notification = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
         .setContentTitle("Background Sync")
         .setContentText("Keeping sync active...")
         .setSmallIcon(android.R.drawable.ic_popup_sync)
-        .setPriority(NotificationCompat.PRIORITY_DEFAULT) // Add priority
-        .setOngoing(true) // Make it ongoing
-        .setAutoCancel(false) // Prevent auto-cancel
-        .setVisibility(NotificationCompat.VISIBILITY_PUBLIC) // Make it visible on lock screen
+        .setPriority(NotificationCompat.PRIORITY_MIN) 
+        .setOngoing(true)
+        .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
         .build()
 
     android.util.Log.i("FlutterDaemon", "Setting foreground service with notification ID: $NOTIFICATION_ID")
