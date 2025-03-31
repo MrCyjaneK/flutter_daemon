@@ -44,9 +44,7 @@ class FlutterDaemonPlugin: FlutterPlugin, MethodCallHandler {
       "startBackgroundSync" -> {
         try {
           val intervalMinutes = call.argument<Int>("intervalMinutes") ?: 15
-          val constraints = Constraints.Builder()
-            .setRequiredNetworkType(NetworkType.CONNECTED)
-            .build()
+          val constraints = buildConstraintsFromPreferences()
           // Store the interval in shared preferences
           val sharedPreferences = context.getSharedPreferences("flutter_daemon_prefs", Context.MODE_PRIVATE)
           sharedPreferences.edit().putInt("background_sync_interval", intervalMinutes).apply()
@@ -200,6 +198,74 @@ class FlutterDaemonPlugin: FlutterPlugin, MethodCallHandler {
           result.error("BATTERY_OPT_ERROR", "Failed to open battery optimization settings", e.message)
         }
       }
+      "setNetworkType" -> {
+        try {
+          val useUnmetered = call.argument<Boolean>("useUnmetered") ?: false
+          setNetworkTypePreference(useUnmetered)
+          result.success(true)
+        } catch (e: Exception) {
+          result.error("CONSTRAINT_ERROR", "Failed to set network type", e.message)
+        }
+      }
+      "getNetworkType" -> {
+        try {
+          val useUnmetered = getNetworkTypePreference()
+          result.success(useUnmetered)
+        } catch (e: Exception) {
+          result.error("CONSTRAINT_ERROR", "Failed to get network type", e.message)
+        }
+      }
+      "setBatteryNotLow" -> {
+        try {
+          val enabled = call.argument<Boolean>("enabled") ?: false
+          setBatteryNotLowPreference(enabled)
+          result.success(true)
+        } catch (e: Exception) {
+          result.error("CONSTRAINT_ERROR", "Failed to set battery constraint", e.message)
+        }
+      }
+      "getBatteryNotLow" -> {
+        try {
+          val enabled = getBatteryNotLowPreference()
+          result.success(enabled)
+        } catch (e: Exception) {
+          result.error("CONSTRAINT_ERROR", "Failed to get battery constraint", e.message)
+        }
+      }
+      "setRequiresCharging" -> {
+        try {
+          val enabled = call.argument<Boolean>("enabled") ?: false
+          setRequiresChargingPreference(enabled)
+          result.success(true)
+        } catch (e: Exception) {
+          result.error("CONSTRAINT_ERROR", "Failed to set charging constraint", e.message)
+        }
+      }
+      "getRequiresCharging" -> {
+        try {
+          val enabled = getRequiresChargingPreference()
+          result.success(enabled)
+        } catch (e: Exception) {
+          result.error("CONSTRAINT_ERROR", "Failed to get charging constraint", e.message)
+        }
+      }
+      "setDeviceIdle" -> {
+        try {
+          val enabled = call.argument<Boolean>("enabled") ?: false
+          setDeviceIdlePreference(enabled)
+          result.success(true)
+        } catch (e: Exception) {
+          result.error("CONSTRAINT_ERROR", "Failed to set device idle constraint", e.message)
+        }
+      }
+      "getDeviceIdle" -> {
+        try {
+          val enabled = getDeviceIdlePreference()
+          result.success(enabled)
+        } catch (e: Exception) {
+          result.error("CONSTRAINT_ERROR", "Failed to get device idle constraint", e.message)
+        }
+      }
       else -> {
         result.notImplemented()
       }
@@ -217,6 +283,69 @@ class FlutterDaemonPlugin: FlutterPlugin, MethodCallHandler {
     }
     // Before Android M, there was no battery optimization system like this
     return true
+  }
+
+  // Helper methods for constraint preferences
+  private fun getSharedPreferences(): android.content.SharedPreferences {
+    return context.getSharedPreferences("flutter_daemon_prefs", Context.MODE_PRIVATE)
+  }
+  
+  private fun setNetworkTypePreference(useUnmetered: Boolean) {
+    getSharedPreferences().edit().putBoolean("network_type_unmetered", useUnmetered).apply()
+  }
+  
+  private fun getNetworkTypePreference(): Boolean {
+    return getSharedPreferences().getBoolean("network_type_unmetered", false)
+  }
+  
+  private fun setBatteryNotLowPreference(enabled: Boolean) {
+    getSharedPreferences().edit().putBoolean("battery_not_low", enabled).apply()
+  }
+  
+  private fun getBatteryNotLowPreference(): Boolean {
+    return getSharedPreferences().getBoolean("battery_not_low", false)
+  }
+  
+  private fun setRequiresChargingPreference(enabled: Boolean) {
+    getSharedPreferences().edit().putBoolean("requires_charging", enabled).apply()
+  }
+  
+  private fun getRequiresChargingPreference(): Boolean {
+    return getSharedPreferences().getBoolean("requires_charging", false)
+  }
+  
+  private fun setDeviceIdlePreference(enabled: Boolean) {
+    getSharedPreferences().edit().putBoolean("device_idle", enabled).apply()
+  }
+  
+  private fun getDeviceIdlePreference(): Boolean {
+    return getSharedPreferences().getBoolean("device_idle", false)
+  }
+  
+  private fun buildConstraintsFromPreferences(): Constraints {
+    val constraintsBuilder = Constraints.Builder()
+    
+    // Set network type based on preference
+    if (getNetworkTypePreference()) {
+      constraintsBuilder.setRequiredNetworkType(NetworkType.UNMETERED)
+    } else {
+      constraintsBuilder.setRequiredNetworkType(NetworkType.CONNECTED)
+    }
+    
+    // Set other constraints based on preferences
+    if (getBatteryNotLowPreference()) {
+      constraintsBuilder.setRequiresBatteryNotLow(true)
+    }
+    
+    if (getRequiresChargingPreference()) {
+      constraintsBuilder.setRequiresCharging(true)
+    }
+    
+    if (getDeviceIdlePreference()) {
+      constraintsBuilder.setRequiresDeviceIdle(true)
+    }
+    
+    return constraintsBuilder.build()
   }
 }
 

@@ -128,4 +128,36 @@ class FlutterDaemon {
     }));
     return false;
   }
+
+  Future<bool> setNetworkType(bool useUnmetered) {
+    return FlutterDaemonPlatform.instance.setNetworkType(useUnmetered);
+  }
+
+  Future<bool> getNetworkType() {
+    return FlutterDaemonPlatform.instance.getNetworkType();
+  }
+
+  Future<bool> setBatteryNotLow(bool enabled) {
+    return FlutterDaemonPlatform.instance.setBatteryNotLow(enabled);
+  }
+
+  Future<bool> getBatteryNotLow() {
+    return FlutterDaemonPlatform.instance.getBatteryNotLow();
+  }
+
+  Future<bool> setRequiresCharging(bool enabled) {
+    return FlutterDaemonPlatform.instance.setRequiresCharging(enabled);
+  }
+
+  Future<bool> getRequiresCharging() {
+    return FlutterDaemonPlatform.instance.getRequiresCharging();
+  }
+
+  Future<bool> setDeviceIdle(bool enabled) {
+    return FlutterDaemonPlatform.instance.setDeviceIdle(enabled);
+  }
+
+  Future<bool> getDeviceIdle() {
+    return FlutterDaemonPlatform.instance.getDeviceIdle();
+  }
 }

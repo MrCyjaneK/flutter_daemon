@@ -153,6 +153,12 @@ class _MyAppState extends State<MyApp> {
   Timer? _statusCheckTimer;
   int _syncIntervalMinutes = -1;
   bool _isBatteryOptDisabled = false;
+  
+  // New state variables for constraints
+  bool _useUnmeteredNetwork = false;
+  bool _requireBatteryNotLow = false;
+  bool _requiresCharging = false;
+  bool _requiresDeviceIdle = false;
 
   @override
   void initState() {
@@ -160,6 +166,7 @@ class _MyAppState extends State<MyApp> {
     initPlatformState();
     _checkBackgroundSyncStatus();
     _checkBatteryOptimizationStatus();
+    _loadConstraintSettings();
 
     _flutterDaemonPlugin.getBackgroundSyncInterval().then((value) {
       setState(() {
@@ -169,6 +176,31 @@ class _MyAppState extends State<MyApp> {
 
     _statusCheckTimer = Timer.periodic(
         const Duration(seconds: 5), (_) => _checkBackgroundSyncStatus());
+  }
+  
+  // Load all constraint settings
+  Future<void> _loadConstraintSettings() async {
+    try {
+      final useUnmetered = await _flutterDaemonPlugin.getNetworkType();
+      final batteryNotLow = await _flutterDaemonPlugin.getBatteryNotLow();
+      final requiresCharging = await _flutterDaemonPlugin.getRequiresCharging();
+      final deviceIdle = await _flutterDaemonPlugin.getDeviceIdle();
+      
+      if (mounted) {
+        setState(() {
+          _useUnmeteredNetwork = useUnmetered;
+          _requireBatteryNotLow = batteryNotLow;
+          _requiresCharging = requiresCharging;
+          _requiresDeviceIdle = deviceIdle;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _statusMessage = 'Failed to load constraint settings: $e';
+        });
+      }
+    }
   }
 
   @override
@@ -281,121 +313,198 @@ class _MyAppState extends State<MyApp> {
         appBar: AppBar(
           title: const Text('Flutter Daemon Example'),
         ),
-        body: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                  'Running on: $_platformVersion every $_syncIntervalMinutes minutes',
-                  style: Theme.of(context).textTheme.titleMedium),
-              const SizedBox(height: 24),
-              Text('Background Sync Status',
-                  style: Theme.of(context).textTheme.titleLarge),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Container(
-                    width: 12,
-                    height: 12,
-                    decoration: BoxDecoration(
-                      color: _isSyncActive ? Colors.green : Colors.red,
-                      shape: BoxShape.circle,
+        body: SingleChildScrollView(
+          child: Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                    'Running on: $_platformVersion every $_syncIntervalMinutes minutes',
+                    style: Theme.of(context).textTheme.titleMedium),
+                const SizedBox(height: 24),
+                Text('Background Sync Status',
+                    style: Theme.of(context).textTheme.titleLarge),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Container(
+                      width: 12,
+                      height: 12,
+                      decoration: BoxDecoration(
+                        color: _isSyncActive ? Colors.green : Colors.red,
+                        shape: BoxShape.circle,
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    _isSyncActive ? 'Active' : 'Inactive',
-                    style: Theme.of(context).textTheme.bodyLarge,
-                  ),
-                ],
-              ),
-              if (_statusMessage.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(top: 8.0),
-                  child: Text(_statusMessage,
-                      style: const TextStyle(color: Colors.blue)),
-                ),
-              const SizedBox(height: 16),
-              Row(
-                children: [
-                  Text('Sync Interval (minutes): '),
-                  SizedBox(width: 8),
-                  DropdownButton<int>(
-                    value: _syncIntervalMinutes,
-                    items:
-                        [-1, 15, 30, 60, 120, 180, 360, 720, 1440].map((int value) {
-                      return DropdownMenuItem<int>(
-                        value: value,
-                        child: Text(
-                            '${(value ~/ 60).toString().padLeft(2, '0')}h${(value % 60).toString().padLeft(2, '0')}m'),
-                      );
-                    }).toList(),
-                    onChanged: (newValue) {
-                      if (newValue != null) {
-                        setState(() {
-                          _syncIntervalMinutes = newValue;
-                        });
-                      }
-                    },
-                  ),
-                ],
-              ),
-              const SizedBox(height: 24),
-              ElevatedButton(
-                onPressed: _toggleBackgroundSync,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: _isSyncActive ? Colors.red : Colors.green,
-                  foregroundColor: Colors.white,
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                ),
-                child: Text(_isSyncActive
-                    ? 'Stop Background Sync'
-                    : 'Start Background Sync'),
-              ),
-              const SizedBox(height: 16),
-              OutlinedButton(
-                onPressed: _checkBackgroundSyncStatus,
-                child: const Text('Refresh Status'),
-              ),
-              const SizedBox(height: 24),
-              Text('Battery Optimization',
-                  style: Theme.of(context).textTheme.titleLarge),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Container(
-                    width: 12,
-                    height: 12,
-                    decoration: BoxDecoration(
-                      color: _isBatteryOptDisabled ? Colors.green : Colors.red,
-                      shape: BoxShape.circle,
+                    const SizedBox(width: 8),
+                    Text(
+                      _isSyncActive ? 'Active' : 'Inactive',
+                      style: Theme.of(context).textTheme.bodyLarge,
                     ),
+                  ],
+                ),
+                if (_statusMessage.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8.0),
+                    child: Text(_statusMessage,
+                        style: const TextStyle(color: Colors.blue)),
                   ),
-                  const SizedBox(width: 8),
-                  Text(
-                    _isBatteryOptDisabled ? 'Disabled' : 'Enabled',
-                    style: Theme.of(context).textTheme.bodyLarge,
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Text('Sync Interval (minutes): '),
+                    SizedBox(width: 8),
+                    DropdownButton<int>(
+                      value: _syncIntervalMinutes,
+                      items:
+                          [-1, 15, 30, 60, 120, 180, 360, 720, 1440].map((int value) {
+                        return DropdownMenuItem<int>(
+                          value: value,
+                          child: Text(
+                              '${(value ~/ 60).toString().padLeft(2, '0')}h${(value % 60).toString().padLeft(2, '0')}m'),
+                        );
+                      }).toList(),
+                      onChanged: (newValue) {
+                        if (newValue != null) {
+                          setState(() {
+                            _syncIntervalMinutes = newValue;
+                          });
+                        }
+                      },
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 24),
+                
+                // Add new section for Work Constraints
+                Text('Work Constraints',
+                    style: Theme.of(context).textTheme.titleLarge),
+                const SizedBox(height: 8),
+                
+                // Network Type
+                SwitchListTile(
+                  title: const Text('Require Unmetered Network'),
+                  subtitle: const Text('Only run on Wi-Fi or unmetered connections'),
+                  value: _useUnmeteredNetwork,
+                  onChanged: (value) async {
+                    final success = await _flutterDaemonPlugin.setNetworkType(value);
+                    if (success && mounted) {
+                      setState(() {
+                        _useUnmeteredNetwork = value;
+                      });
+                    }
+                  },
+                ),
+                
+                // Battery Not Low
+                SwitchListTile(
+                  title: const Text('Require Battery Not Low'),
+                  subtitle: const Text('Skip when device is in low battery mode'),
+                  value: _requireBatteryNotLow,
+                  onChanged: (value) async {
+                    final success = await _flutterDaemonPlugin.setBatteryNotLow(value);
+                    if (success && mounted) {
+                      setState(() {
+                        _requireBatteryNotLow = value;
+                      });
+                    }
+                  },
+                ),
+                
+                // Requires Charging
+                SwitchListTile(
+                  title: const Text('Require Charging'),
+                  subtitle: const Text('Only run when device is charging'),
+                  value: _requiresCharging,
+                  onChanged: (value) async {
+                    final success = await _flutterDaemonPlugin.setRequiresCharging(value);
+                    if (success && mounted) {
+                      setState(() {
+                        _requiresCharging = value;
+                      });
+                    }
+                  },
+                ),
+                
+                // Device Idle
+                SwitchListTile(
+                  title: const Text('Require Device Idle'),
+                  subtitle: const Text('Only run when device is idle'),
+                  value: _requiresDeviceIdle,
+                  onChanged: (value) async {
+                    final success = await _flutterDaemonPlugin.setDeviceIdle(value);
+                    if (success && mounted) {
+                      setState(() {
+                        _requiresDeviceIdle = value;
+                      });
+                    }
+                  },
+                ),
+                
+                // Refresh constraints button
+                OutlinedButton(
+                  onPressed: _loadConstraintSettings,
+                  child: const Text('Refresh Constraint Settings'),
+                ),
+                
+                const SizedBox(height: 24),
+                ElevatedButton(
+                  onPressed: _toggleBackgroundSync,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: _isSyncActive ? Colors.red : Colors.green,
+                    foregroundColor: Colors.white,
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
                   ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              ElevatedButton(
-                onPressed: _requestDisableBatteryOptimization,
-                child: const Text('Request Disable Battery Optimization'),
-              ),
-              const SizedBox(height: 8),
-              OutlinedButton(
-                onPressed: _openBatteryOptimizationSettings,
-                child: const Text('Open Battery Settings'),
-              ),
-              const SizedBox(height: 8),
-              OutlinedButton(
-                onPressed: _checkBatteryOptimizationStatus,
-                child: const Text('Refresh Battery Status'),
-              ),
-            ],
+                  child: Text(_isSyncActive
+                      ? 'Stop Background Sync'
+                      : 'Start Background Sync'),
+                ),
+                const SizedBox(height: 16),
+                OutlinedButton(
+                  onPressed: _checkBackgroundSyncStatus,
+                  child: const Text('Refresh Status'),
+                ),
+                
+                // Rest of the existing UI...
+                const SizedBox(height: 24),
+                Text('Battery Optimization',
+                    style: Theme.of(context).textTheme.titleLarge),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Container(
+                      width: 12,
+                      height: 12,
+                      decoration: BoxDecoration(
+                        color: _isBatteryOptDisabled ? Colors.green : Colors.red,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      _isBatteryOptDisabled ? 'Disabled' : 'Enabled',
+                      style: Theme.of(context).textTheme.bodyLarge,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                ElevatedButton(
+                  onPressed: _requestDisableBatteryOptimization,
+                  child: const Text('Request Disable Battery Optimization'),
+                ),
+                const SizedBox(height: 8),
+                OutlinedButton(
+                  onPressed: _openBatteryOptimizationSettings,
+                  child: const Text('Open Battery Settings'),
+                ),
+                const SizedBox(height: 8),
+                OutlinedButton(
+                  onPressed: _checkBatteryOptimizationStatus,
+                  child: const Text('Refresh Battery Status'),
+                ),
+              ],
+            ),
           ),
         ),
       ),

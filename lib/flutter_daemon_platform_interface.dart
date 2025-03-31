@@ -53,4 +53,40 @@ abstract class FlutterDaemonPlatform extends PlatformInterface {
     throw UnimplementedError(
         'openBatteryOptimizationSettings() has not been implemented.');
   }
+
+  Future<bool> setNetworkType(bool useUnmetered) {
+    throw UnimplementedError(
+        'setNetworkType(useUnmetered: $useUnmetered) has not been implemented.');
+  }
+  
+  Future<bool> getNetworkType() {
+    throw UnimplementedError('getNetworkType() has not been implemented.');
+  }
+  
+  Future<bool> setBatteryNotLow(bool enabled) {
+    throw UnimplementedError(
+        'setBatteryNotLow(enabled: $enabled) has not been implemented.');
+  }
+  
+  Future<bool> getBatteryNotLow() {
+    throw UnimplementedError('getBatteryNotLow() has not been implemented.');
+  }
+  
+  Future<bool> setRequiresCharging(bool enabled) {
+    throw UnimplementedError(
+        'setRequiresCharging(enabled: $enabled) has not been implemented.');
+  }
+  
+  Future<bool> getRequiresCharging() {
+    throw UnimplementedError('getRequiresCharging() has not been implemented.');
+  }
+  
+  Future<bool> setDeviceIdle(bool enabled) {
+    throw UnimplementedError(
+        'setDeviceIdle(enabled: $enabled) has not been implemented.');
+  }
+  
+  Future<bool> getDeviceIdle() {
+    throw UnimplementedError('getDeviceIdle() has not been implemented.');
+  }
 }

@@ -64,4 +64,64 @@ class MethodChannelFlutterDaemon extends FlutterDaemonPlatform {
         await methodChannel.invokeMethod<bool>('openBatteryOptimizationSettings');
     return result ?? false;
   }
+
+  @override
+  Future<bool> setNetworkType(bool useUnmetered) async {
+    final result = await methodChannel.invokeMethod<bool>(
+      'setNetworkType',
+      {'useUnmetered': useUnmetered},
+    );
+    return result ?? false;
+  }
+  
+  @override
+  Future<bool> getNetworkType() async {
+    final result = await methodChannel.invokeMethod<bool>('getNetworkType');
+    return result ?? false;
+  }
+  
+  @override
+  Future<bool> setBatteryNotLow(bool enabled) async {
+    final result = await methodChannel.invokeMethod<bool>(
+      'setBatteryNotLow',
+      {'enabled': enabled},
+    );
+    return result ?? false;
+  }
+  
+  @override
+  Future<bool> getBatteryNotLow() async {
+    final result = await methodChannel.invokeMethod<bool>('getBatteryNotLow');
+    return result ?? false;
+  }
+  
+  @override
+  Future<bool> setRequiresCharging(bool enabled) async {
+    final result = await methodChannel.invokeMethod<bool>(
+      'setRequiresCharging',
+      {'enabled': enabled},
+    );
+    return result ?? false;
+  }
+  
+  @override
+  Future<bool> getRequiresCharging() async {
+    final result = await methodChannel.invokeMethod<bool>('getRequiresCharging');
+    return result ?? false;
+  }
+  
+  @override
+  Future<bool> setDeviceIdle(bool enabled) async {
+    final result = await methodChannel.invokeMethod<bool>(
+      'setDeviceIdle',
+      {'enabled': enabled},
+    );
+    return result ?? false;
+  }
+  
+  @override
+  Future<bool> getDeviceIdle() async {
+    final result = await methodChannel.invokeMethod<bool>('getDeviceIdle');
+    return result ?? false;
+  }
 }
