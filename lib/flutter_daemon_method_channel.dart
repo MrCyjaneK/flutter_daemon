@@ -124,4 +124,16 @@ class MethodChannelFlutterDaemon extends FlutterDaemonPlatform {
     final result = await methodChannel.invokeMethod<bool>('getDeviceIdle');
     return result ?? false;
   }
+
+  @override
+  Future<String> getLogs() async {
+    final logs = await methodChannel.invokeMethod<String>('getLogs');
+    return logs ?? '{}';
+  }
+
+  @override
+  Future<bool> clearLogs() async {
+    final success = await methodChannel.invokeMethod<bool>('clearLogs');
+    return success ?? false;
+  }
 }

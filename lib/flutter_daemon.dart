@@ -1,14 +1,20 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
 import 'dart:math';
 import 'package:flutter/services.dart';
+import 'package:flutter_daemon/src/logging.dart';
 import 'package:path/path.dart' as p;
 import 'flutter_daemon_platform_interface.dart';
+export 'src/logging.dart';
 
 class FlutterDaemon {
-  Future<String?> getPlatformVersion() {
-    return FlutterDaemonPlatform.instance.getPlatformVersion();
+  static const MethodChannel _channel = MethodChannel('flutter_daemon');
+
+  Future<String> getPlatformVersion() async {
+    final String version = await _channel.invokeMethod('getPlatformVersion');
+    return version;
   }
 
   Future<String> startBackgroundSync(int intervalMinutes) {
@@ -159,5 +165,14 @@ class FlutterDaemon {
 
   Future<bool> getDeviceIdle() {
     return FlutterDaemonPlatform.instance.getDeviceIdle();
+  }
+
+  Future<LogData> getLogs() async {
+    final String logsJson = await FlutterDaemonPlatform.instance.getLogs();
+    return LogData.fromJson(json.decode(logsJson));
+  }
+
+  Future<bool> clearLogs() {
+    return FlutterDaemonPlatform.instance.clearLogs();
   }
 }

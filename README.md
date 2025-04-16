@@ -46,6 +46,14 @@ Future<bool> requestDisableBatteryOptimization() {
 Future<bool> openBatteryOptimizationSettings() {
     return FlutterDaemon().openBatteryOptimizationSettings();
 }
+
+Future<LogData> getLogs() async {
+  return FlutterDaemon().getLogs();
+}
+
+Future<bool> clearLogs() {
+  return FlutterDaemon().clearLogs();
+}
 ```
 
 in `main.dart` you need to add a function that will be called in background

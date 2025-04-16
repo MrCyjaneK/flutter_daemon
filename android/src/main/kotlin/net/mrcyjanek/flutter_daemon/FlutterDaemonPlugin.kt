@@ -29,14 +29,20 @@ import android.content.pm.ServiceInfo
 class FlutterDaemonPlugin: FlutterPlugin, MethodCallHandler {
   private lateinit var channel : MethodChannel
   private lateinit var context: Context
+  private lateinit var logger: FileLogger
 
   override fun onAttachedToEngine(@NonNull flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
     context = flutterPluginBinding.applicationContext
+    logger = FileLogger.getInstance(context)
+    logger.logInfo("FlutterDaemonPlugin attached to engine")
+    
     channel = MethodChannel(flutterPluginBinding.binaryMessenger, "flutter_daemon")
     channel.setMethodCallHandler(this)
   }
 
   override fun onMethodCall(@NonNull call: MethodCall, @NonNull result: Result) {
+    logger.logInfo("Method call received: ${call.method}")
+    
     when (call.method) {
       "getPlatformVersion" -> {
         result.success("Android ${android.os.Build.VERSION.RELEASE}")
@@ -44,6 +50,8 @@ class FlutterDaemonPlugin: FlutterPlugin, MethodCallHandler {
       "startBackgroundSync" -> {
         try {
           val intervalMinutes = call.argument<Int>("intervalMinutes") ?: 15
+          logger.logInfo("Starting background sync with interval: $intervalMinutes minutes")
+          
           val constraints = buildConstraintsFromPreferences()
           // Store the interval in shared preferences
           val sharedPreferences = context.getSharedPreferences("flutter_daemon_prefs", Context.MODE_PRIVATE)
@@ -58,16 +66,21 @@ class FlutterDaemonPlugin: FlutterPlugin, MethodCallHandler {
               ExistingPeriodicWorkPolicy.REPLACE,
               syncWorkRequest
           )
+          logger.logInfo("Background sync scheduled successfully")
           result.success("Background sync scheduled every $intervalMinutes minutes.")
         } catch (e: Exception) {
+          logger.logError("Failed to schedule background sync", e)
           result.error("BACKGROUND_SYNC_ERROR", "Failed to schedule background sync", e.message)
         }
       }
       "stopBackgroundSync" -> {
         try {
+          logger.logInfo("Stopping background sync")
           WorkManager.getInstance(context).cancelUniqueWork("BackgroundSyncWork")
+          logger.logInfo("Background sync stopped successfully")
           result.success("Background sync stopped successfully.")
         } catch (e: Exception) {
+          logger.logError("Failed to stop background sync", e)
           result.error("BACKGROUND_SYNC_ERROR", "Failed to stop background sync", e.message)
         }
       }
@@ -266,6 +279,26 @@ class FlutterDaemonPlugin: FlutterPlugin, MethodCallHandler {
           result.error("CONSTRAINT_ERROR", "Failed to get device idle constraint", e.message)
         }
       }
+      "getLogs" -> {
+        try {
+          logger.logInfo("Retrieving logs")
+          val logs = logger.getLogsAsJson()
+          result.success(logs)
+        } catch (e: Exception) {
+          logger.logError("Failed to retrieve logs", e)
+          result.error("LOGS_ERROR", "Failed to retrieve logs", e.message)
+        }
+      }
+      "clearLogs" -> {
+        try {
+          logger.logInfo("Clearing logs")
+          logger.clearLogs()
+          result.success(true)
+        } catch (e: Exception) {
+          logger.logError("Failed to clear logs", e)
+          result.error("LOGS_ERROR", "Failed to clear logs", e.message)
+        }
+      }
       else -> {
         result.notImplemented()
       }
@@ -357,11 +390,14 @@ class BackgroundSyncWorker(appContext: Context, workerParams: WorkerParameters) 
   }
 
   override fun doWork(): androidx.work.ListenableWorker.Result {
-    android.util.Log.i("FlutterDaemon", "Starting background work process")
-    android.util.Log.i("FlutterDaemon", "Creating notification channel for foreground service")
+    val logger = FileLogger.getInstance(applicationContext)
+    val sessionId = logger.startSession("BackgroundSync")
+    
+    logger.logInfo("Starting background work process", sessionId)
+    logger.logInfo("Creating notification channel for foreground service", sessionId)
     createNotificationChannel()
     
-    android.util.Log.i("FlutterDaemon", "Building foreground notification")
+    logger.logInfo("Building foreground notification", sessionId)
     val notification = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
         .setContentTitle("Background Sync")
         .setContentText("Keeping sync active...")
@@ -371,97 +407,100 @@ class BackgroundSyncWorker(appContext: Context, workerParams: WorkerParameters) 
         .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
         .build()
 
-    android.util.Log.i("FlutterDaemon", "Setting foreground service with notification ID: $NOTIFICATION_ID")
+    logger.logInfo("Setting foreground service with notification ID: $NOTIFICATION_ID", sessionId)
     setForegroundAsync(androidx.work.ForegroundInfo(
         NOTIFICATION_ID,
         notification,
         ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
     ))
-    android.util.Log.i("FlutterDaemon", "Foreground service setup completed")
+    logger.logInfo("Foreground service setup completed", sessionId)
 
-    android.util.Log.i("FlutterDaemon", "Checking if app is in foreground state")
+    logger.logInfo("Checking if app is in foreground state", sessionId)
     if (isAppInForeground()) {
-      android.util.Log.i("FlutterDaemon", "App is currently in foreground, considering whether to skip background sync")
+      logger.logInfo("App is currently in foreground, skipping background sync", sessionId)
+      logger.endSession(sessionId, true)
       return androidx.work.ListenableWorker.Result.success()
     } else {
-      android.util.Log.i("FlutterDaemon", "App is in background, proceeding with background sync")
+      logger.logInfo("App is in background, proceeding with background sync", sessionId)
     }
     
-    android.util.Log.i("FlutterDaemon", "Checking if another background sync is already running")
+    logger.logInfo("Checking if another background sync is already running", sessionId)
     if (!isRunning.compareAndSet(false, true)) {
-      android.util.Log.i("FlutterDaemon", "Another background sync is already in progress, skipping this execution")
+      logger.logInfo("Another background sync is already in progress, skipping this execution", sessionId)
+      logger.endSession(sessionId, true)
       return androidx.work.ListenableWorker.Result.success()
     }
-    android.util.Log.i("FlutterDaemon", "No other background sync running, proceeding with this one")
+    logger.logInfo("No other background sync running, proceeding with this one", sessionId)
 
     try {
-      android.util.Log.i("FlutterDaemon", "Creating main thread handler for Flutter engine initialization")
+      logger.logInfo("Creating main thread handler for Flutter engine initialization", sessionId)
       val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
-      android.util.Log.i("FlutterDaemon", "Creating countdown latch for synchronization")
+      logger.logInfo("Creating countdown latch for synchronization", sessionId)
       val latch = java.util.concurrent.CountDownLatch(1)
       var result: androidx.work.ListenableWorker.Result = androidx.work.ListenableWorker.Result.success()
       
-      android.util.Log.i("FlutterDaemon", "Posting Flutter engine initialization task to main thread")
+      logger.logInfo("Posting Flutter engine initialization task to main thread", sessionId)
       mainHandler.post {
-        android.util.Log.i("FlutterDaemon", "Main thread: Starting Flutter engine initialization")
+        logger.logInfo("Main thread: Starting Flutter engine initialization", sessionId)
         try {
-          android.util.Log.i("FlutterDaemon", "Main thread: Creating new FlutterEngine instance")
+          logger.logInfo("Main thread: Creating new FlutterEngine instance", sessionId)
           val flutterEngine = FlutterEngine(applicationContext)
           
-          android.util.Log.i("FlutterDaemon", "Main thread: Starting Flutter initialization")
+          logger.logInfo("Main thread: Starting Flutter initialization", sessionId)
           FlutterMain.startInitialization(applicationContext)
-          android.util.Log.i("FlutterDaemon", "Main thread: Ensuring Flutter initialization is complete")
+          logger.logInfo("Main thread: Ensuring Flutter initialization is complete", sessionId)
           FlutterMain.ensureInitializationComplete(applicationContext, null)
           
-          android.util.Log.i("FlutterDaemon", "Main thread: Finding app bundle path")
+          logger.logInfo("Main thread: Finding app bundle path", sessionId)
           val appBundlePath = FlutterMain.findAppBundlePath(applicationContext)
           
           if (appBundlePath != null) {
-            android.util.Log.i("FlutterDaemon", "Main thread: App bundle path found: $appBundlePath")
-            android.util.Log.i("FlutterDaemon", "Main thread: Executing Dart entrypoint 'backgroundSync'")
+            logger.logInfo("Main thread: App bundle path found: $appBundlePath", sessionId)
+            logger.logInfo("Main thread: Executing Dart entrypoint 'backgroundSync'", sessionId)
             flutterEngine.dartExecutor.executeDartEntrypoint(
                 DartExecutor.DartEntrypoint(appBundlePath, "backgroundSync")
             )
             
-            android.util.Log.i("FlutterDaemon", "Main thread: Caching Flutter engine with key 'background_engine'")
+            logger.logInfo("Main thread: Caching Flutter engine with key 'background_engine'", sessionId)
             io.flutter.embedding.engine.FlutterEngineCache.getInstance()
               .put("background_engine", flutterEngine)
-            android.util.Log.i("FlutterDaemon", "Main thread: Flutter engine initialization successful")
+            logger.logInfo("Main thread: Flutter engine initialization successful", sessionId)
           } else {
-            android.util.Log.e("FlutterDaemon", "Main thread: Failed to find app bundle path, cannot execute Dart code")
+            logger.logError("Main thread: Failed to find app bundle path, cannot execute Dart code", null, sessionId)
             result = androidx.work.ListenableWorker.Result.failure()
           }
         } catch (e: Exception) {
-          android.util.Log.e("FlutterDaemon", "Main thread: Error executing Flutter task: ${e.message}", e)
+          logger.logError("Main thread: Error executing Flutter task: ${e.message}", e, sessionId)
           result = androidx.work.ListenableWorker.Result.failure()
         } finally {
-          android.util.Log.i("FlutterDaemon", "Main thread: Counting down latch to signal completion")
+          logger.logInfo("Main thread: Counting down latch to signal completion", sessionId)
           latch.countDown()
         }
       }
       
-      android.util.Log.i("FlutterDaemon", "Waiting for Flutter initialization to complete (timeout: 30 seconds)")
+      logger.logInfo("Waiting for Flutter initialization to complete (timeout: 30 seconds)", sessionId)
       
       // Wait for Flutter initialization to complete with a timeout
       if (!latch.await(30, TimeUnit.SECONDS)) {
-        android.util.Log.e("FlutterDaemon", "Timeout waiting for Flutter engine initialization")
+        logger.logError("Timeout waiting for Flutter engine initialization", null, sessionId)
+        logger.endSession(sessionId, false)
         return androidx.work.ListenableWorker.Result.failure()
       }
       
       // Set up a channel to listen for the backgroundSyncComplete message
-      android.util.Log.i("FlutterDaemon", "Setting up method channel to listen for completion")
+      logger.logInfo("Setting up method channel to listen for completion", sessionId)
       val mainThreadLatch = java.util.concurrent.CountDownLatch(1)
       
       mainHandler.post {
         try {
           val flutterEngine = io.flutter.embedding.engine.FlutterEngineCache.getInstance().get("background_engine")
           if (flutterEngine != null) {
-            android.util.Log.i("FlutterDaemon", "Creating method channel for completion signal")
+            logger.logInfo("Creating method channel for completion signal", sessionId)
             val methodChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "flutter_daemon")
             
             methodChannel.setMethodCallHandler { call, callResult ->
               if (call.method == "backgroundSyncComplete") {
-                android.util.Log.i("FlutterDaemon", "Received backgroundSyncComplete signal from Dart")
+                logger.logInfo("Received backgroundSyncComplete signal from Dart", sessionId)
                 callResult.success(true)
                 mainThreadLatch.countDown()
               } else {
@@ -469,25 +508,26 @@ class BackgroundSyncWorker(appContext: Context, workerParams: WorkerParameters) 
               }
             }
           } else {
-            android.util.Log.e("FlutterDaemon", "Flutter engine not found in cache")
+            logger.logError("Flutter engine not found in cache", null, sessionId)
             mainThreadLatch.countDown()
           }
         } catch (e: Exception) {
-          android.util.Log.e("FlutterDaemon", "Error setting up method channel: ${e.message}", e)
+          logger.logError("Error setting up method channel: ${e.message}", e, sessionId)
           mainThreadLatch.countDown()
         }
       }
       
-      android.util.Log.i("FlutterDaemon", "Waiting for backgroundSyncComplete signal (timeout: 10 minutes)")
+      logger.logInfo("Waiting for backgroundSyncComplete signal (timeout: 10 minutes)", sessionId)
       if (!mainThreadLatch.await(10, TimeUnit.MINUTES)) {
-        android.util.Log.e("FlutterDaemon", "Timeout waiting for backgroundSyncComplete signal")
+        logger.logError("Timeout waiting for backgroundSyncComplete signal", null, sessionId)
         result = androidx.work.ListenableWorker.Result.failure()
       }
 
-      android.util.Log.i("FlutterDaemon", "Background sync process completed with result: $result")
+      logger.logInfo("Background sync process completed with result: $result", sessionId)
+      logger.endSession(sessionId, result is androidx.work.ListenableWorker.Result.Success)
       return result
     } finally {
-      android.util.Log.i("FlutterDaemon", "Resetting isRunning flag to allow future background syncs")
+      logger.logInfo("Resetting isRunning flag to allow future background syncs", sessionId)
       isRunning.set(false)
     }
   }

@@ -89,4 +89,12 @@ abstract class FlutterDaemonPlatform extends PlatformInterface {
   Future<bool> getDeviceIdle() {
     throw UnimplementedError('getDeviceIdle() has not been implemented.');
   }
+
+  Future<String> getLogs() {
+    throw UnimplementedError('getLogs() has not been implemented.');
+  }
+
+  Future<bool> clearLogs() {
+    throw UnimplementedError('clearLogs() has not been implemented.');
+  }
 }
