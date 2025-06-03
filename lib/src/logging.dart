@@ -1,6 +1,3 @@
-import 'dart:convert';
-import 'package:flutter_daemon/flutter_daemon.dart';
-
 class LogEntry {
   final DateTime timestamp;
   final String level;

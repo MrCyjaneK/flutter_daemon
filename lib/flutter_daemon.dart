@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
+import 'dart:io' as io;
 import 'dart:isolate';
 import 'dart:math';
 import 'package:flutter/services.dart';
@@ -46,17 +46,17 @@ class FlutterDaemon {
   }
 
   Future<bool> isBackgroundSyncActive() async {
-    final Directory tempDir = Directory.systemTemp;
+    final io.Directory tempDir = io.Directory.systemTemp;
     print("tempDir: ${tempDir.path}");
     final String path =
         p.join(tempDir.path, "flutter_daemon_background", "__daemonfile");
 
-    final directory = Directory(p.dirname(path));
+    final directory = io.Directory(p.dirname(path));
     if (!directory.existsSync()) {
       directory.createSync(recursive: true);
     }
 
-    final statFile = File(path);
+    final statFile = io.File(path);
 
     if (statFile.existsSync()) {
       try {
@@ -75,11 +75,24 @@ class FlutterDaemon {
     return false;
   }
 
-  final String path = p.join(
-      Directory.systemTemp.path, "flutter_daemon_background", "__daemonfile");
+  final String path = p.join(io.Directory.systemTemp.path,
+      "flutter_daemon_background", "__daemonfile");
+
+  final String pidFilePath = p.join(io.Directory.systemTemp.path,
+      "flutter_daemon_background", "__daemonfile.pid");
 
   Future<bool> unmarkBackgroundSync() async {
-    final statFile = File(path);
+    final pidFile = io.File(pidFilePath);
+    if (pidFile.existsSync()) {
+      final pidStr = pidFile.readAsStringSync();
+      final pid = int.tryParse(pidStr);
+      if (pid != null) {
+        io.Process.killPid(pid);
+        await Future.delayed(Duration(milliseconds: 250));
+        io.Process.killPid(pid, io.ProcessSignal.sigkill);
+      }
+    }
+    final statFile = io.File(path);
     if (statFile.existsSync()) {
       statFile.deleteSync();
     }
@@ -91,12 +104,12 @@ class FlutterDaemon {
 
     await Future.delayed(Duration(seconds: 1));
 
-    final directory = Directory(p.dirname(path));
+    final directory = io.Directory(p.dirname(path));
     if (!directory.existsSync()) {
       directory.createSync(recursive: true);
     }
 
-    final statFile = File(path);
+    final statFile = io.File(path);
 
     if (statFile.existsSync()) {
       try {
@@ -116,6 +129,7 @@ class FlutterDaemon {
     } else {
       statFile.createSync(recursive: true);
     }
+    io.File(pidFilePath).writeAsStringSync(io.pid.toString());
 
     final rootToken = ServicesBinding.rootIsolateToken;
     final randomId = Random.secure().nextInt(1000000);

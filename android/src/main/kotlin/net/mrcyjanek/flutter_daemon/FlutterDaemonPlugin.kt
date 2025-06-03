@@ -41,8 +41,6 @@ class FlutterDaemonPlugin: FlutterPlugin, MethodCallHandler {
   }
 
   override fun onMethodCall(@NonNull call: MethodCall, @NonNull result: Result) {
-    logger.logInfo("Method call received: ${call.method}")
-    
     when (call.method) {
       "getPlatformVersion" -> {
         result.success("Android ${android.os.Build.VERSION.RELEASE}")
@@ -281,7 +279,6 @@ class FlutterDaemonPlugin: FlutterPlugin, MethodCallHandler {
       }
       "getLogs" -> {
         try {
-          logger.logInfo("Retrieving logs")
           val logs = logger.getLogsAsJson()
           result.success(logs)
         } catch (e: Exception) {
@@ -291,7 +288,6 @@ class FlutterDaemonPlugin: FlutterPlugin, MethodCallHandler {
       }
       "clearLogs" -> {
         try {
-          logger.logInfo("Clearing logs")
           logger.clearLogs()
           result.success(true)
         } catch (e: Exception) {
@@ -550,7 +546,6 @@ class BackgroundSyncWorker(appContext: Context, workerParams: WorkerParameters) 
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
       val name = "Flutter Daemon"
       val descriptionText = "Background sync notifications"
-      // Change importance to IMPORTANCE_DEFAULT to make it more visible
       val importance = android.app.NotificationManager.IMPORTANCE_DEFAULT
       val channel = android.app.NotificationChannel(CHANNEL_ID, name, importance).apply {
         description = descriptionText
