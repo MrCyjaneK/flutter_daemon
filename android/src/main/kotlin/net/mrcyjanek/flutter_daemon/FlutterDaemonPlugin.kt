@@ -14,7 +14,7 @@ import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler
 import io.flutter.plugin.common.MethodChannel.Result
-import io.flutter.view.FlutterMain
+import io.flutter.embedding.engine.loader.FlutterLoader
 import java.util.concurrent.TimeUnit
 import androidx.work.Constraints
 import androidx.work.NetworkType
@@ -441,14 +441,15 @@ class BackgroundSyncWorker(appContext: Context, workerParams: WorkerParameters) 
         try {
           logger.logInfo("Main thread: Creating new FlutterEngine instance", sessionId)
           val flutterEngine = FlutterEngine(applicationContext)
-          
+          val flutterLoader = FlutterLoader()
+
           logger.logInfo("Main thread: Starting Flutter initialization", sessionId)
-          FlutterMain.startInitialization(applicationContext)
+          flutterLoader.startInitialization(applicationContext)
           logger.logInfo("Main thread: Ensuring Flutter initialization is complete", sessionId)
-          FlutterMain.ensureInitializationComplete(applicationContext, null)
+          flutterLoader.ensureInitializationComplete(applicationContext, null)
           
           logger.logInfo("Main thread: Finding app bundle path", sessionId)
-          val appBundlePath = FlutterMain.findAppBundlePath(applicationContext)
+          val appBundlePath = flutterLoader.findAppBundlePath()
           
           if (appBundlePath != null) {
             logger.logInfo("Main thread: App bundle path found: $appBundlePath", sessionId)
