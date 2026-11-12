@@ -89,14 +89,16 @@ class LogData {
   });
   
   factory LogData.fromJson(Map<String, dynamic> json) {
-    final logs = (json['logs'] as List)
-        .map((e) => LogEntry.fromJson(e as Map<String, dynamic>))
-        .toList();
-        
-    final sessions = (json['sessions'] as List)
-        .map((e) => LogSession.fromJson(e as Map<String, dynamic>))
-        .toList();
-        
+    final logs = (json['logs'] as List?)
+            ?.map((e) => LogEntry.fromJson(e as Map<String, dynamic>))
+            .toList() ??
+        <LogEntry>[];
+
+    final sessions = (json['sessions'] as List?)
+            ?.map((e) => LogSession.fromJson(e as Map<String, dynamic>))
+            .toList() ??
+        <LogSession>[];
+
     return LogData(logs: logs, sessions: sessions);
   }
   
