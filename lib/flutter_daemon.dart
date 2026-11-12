@@ -81,16 +81,42 @@ class FlutterDaemon {
   final String pidFilePath = p.join(io.Directory.systemTemp.path,
       "flutter_daemon_background", "__daemonfile.pid");
 
+  /// Set by the app when it starts; a running background sync stops at its next check.
+  final String foregroundFilePath = p.join(io.Directory.systemTemp.path,
+      "flutter_daemon_background", "__daemonfile.foreground");
+
+  /// Called by the app on start instead of [unmarkBackgroundSync]. The background engine
+  /// runs in the app's own process, so it is asked to stop (see [foregroundRequested])
+  /// rather than killed. A stale run (no heartbeat for 5 minutes) is cleared as before.
+  Future<void> requestForeground() async {
+    final flag = io.File(foregroundFilePath);
+    if (await isBackgroundSyncActive()) {
+      flag.createSync(recursive: true);
+    } else {
+      await unmarkBackgroundSync();
+    }
+  }
+
+  /// Whether the app has started since this background sync began; the sync should then
+  /// stop its current wallet and return.
+  bool get foregroundRequested => io.File(foregroundFilePath).existsSync();
+
   Future<bool> unmarkBackgroundSync() async {
     final pidFile = io.File(pidFilePath);
     if (pidFile.existsSync()) {
-      final pidStr = pidFile.readAsStringSync();
-      final pid = int.tryParse(pidStr);
-      if (pid != null) {
+      final pid = int.tryParse(pidFile.readAsStringSync());
+      // The recorded pid is normally this very process (the background engine runs in the
+      // app process): never signal it. Only a run left by another process is killed.
+      if (pid != null && pid != io.pid) {
         io.Process.killPid(pid);
         await Future.delayed(Duration(milliseconds: 250));
         io.Process.killPid(pid, io.ProcessSignal.sigkill);
       }
+      pidFile.deleteSync();
+    }
+    final flag = io.File(foregroundFilePath);
+    if (flag.existsSync()) {
+      flag.deleteSync();
     }
     final statFile = io.File(path);
     if (statFile.existsSync()) {
@@ -128,6 +154,10 @@ class FlutterDaemon {
       }
     } else {
       statFile.createSync(recursive: true);
+    }
+    final flag = io.File(foregroundFilePath);
+    if (flag.existsSync()) {
+      flag.deleteSync();
     }
     io.File(pidFilePath).writeAsStringSync(io.pid.toString());
 

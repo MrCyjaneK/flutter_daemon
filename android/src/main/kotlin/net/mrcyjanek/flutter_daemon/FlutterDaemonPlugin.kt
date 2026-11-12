@@ -520,6 +520,19 @@ class BackgroundSyncWorker(appContext: Context, workerParams: WorkerParameters) 
         result = androidx.work.ListenableWorker.Result.failure()
       }
 
+      // The run is over (finished or timed out): stop the background engine so a hung sync
+      // doesn't keep running, and holding memory, inside the app process.
+      mainHandler.post {
+        try {
+          val cache = io.flutter.embedding.engine.FlutterEngineCache.getInstance()
+          cache.get("background_engine")?.destroy()
+          cache.remove("background_engine")
+          logger.logInfo("Background engine destroyed", sessionId)
+        } catch (e: Exception) {
+          logger.logError("Error destroying background engine: ${e.message}", e, sessionId)
+        }
+      }
+
       logger.logInfo("Background sync process completed with result: $result", sessionId)
       logger.endSession(sessionId, result is androidx.work.ListenableWorker.Result.Success)
       return result
