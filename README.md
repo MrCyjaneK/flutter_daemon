@@ -133,6 +133,14 @@ Optional, not required feature if you want to prompt users to disable battery op
 
 If you don't add this permission then users will be required to do a couple manual steps, open settings, find app name, and manually disable battery optimizations.
 
+## Sailfish OS
+
+Packaging is `rpm/` and `.sfosbuild/` (cyanek-sfos), pinned to flutter-sfos 3.44.0. sfosbuild runs from the repository root so `example/` can see this plugin at `path: ../`.
+
+```bash
+sfosbuild --network --in-place 5.1.0.11 aarch64 rpm/flutter-daemon.yaml
+```
+
 ## Special thanks
 
 - https://github.com/transistorsoft/transistor-background-fetch

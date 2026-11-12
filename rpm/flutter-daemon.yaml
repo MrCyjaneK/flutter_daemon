@@ -1,0 +1,39 @@
+Name: flutter-daemon
+Summary: Background task example for Sailfish OS
+Version: 0.0.1
+Release: 1
+Group: Applications/System
+License: LGPL-3.0-only
+Sources:
+- '%{name}-%{version}.tar.bz2'
+Description: |
+    Example app for the flutter_daemon plugin, AOT via flutter-sfos 3.44.0.
+Configure: none
+Builder: none
+Requires:
+- flutter-sfos-3.44.0 = 3.44.0
+PkgBR:
+- clang
+- cmake
+- make
+- git
+- unzip
+- curl
+- flutter-sfos-3.44.0-devel
+ExtraInstall: |
+  cd example
+  /usr/libexec/flutter-sfos/3.44.0/flutter-sfos-aot "$PWD" "$PWD/build/sfos/bundle"
+  cd ..
+  mkdir -p %{buildroot}%{_datadir}/flutter-daemon
+  mkdir -p %{buildroot}%{_bindir}
+  mkdir -p %{buildroot}%{_datadir}/applications
+  cp -a example/build/sfos/bundle/. %{buildroot}%{_datadir}/flutter-daemon/
+  rm -f %{buildroot}%{_datadir}/flutter-daemon/lib/libflutter_engine.so \
+    %{buildroot}%{_datadir}/flutter-daemon/lib/libflutter_elinux_*.so
+  install -m 755 rpm/flutter-daemon.sh %{buildroot}%{_bindir}/flutter-daemon
+  install -m 644 rpm/flutter-daemon.desktop %{buildroot}%{_datadir}/applications/flutter-daemon.desktop
+Files:
+- '%{_bindir}/flutter-daemon'
+- '%{_datadir}/applications/flutter-daemon.desktop'
+- '%dir %{_datadir}/flutter-daemon'
+- '%{_datadir}/flutter-daemon/'
