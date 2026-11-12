@@ -6,13 +6,20 @@ project(${PROJECT_NAME} LANGUAGES CXX)
 # not be changed
 set(PLUGIN_NAME "flutter_daemon_plugin")
 
+if(NOT DEFINED BINARY_NAME OR "${BINARY_NAME}" STREQUAL "")
+  message(FATAL_ERROR
+    "flutter_daemon requires BINARY_NAME to be set by the application CMakeLists.txt")
+endif()
+
 add_library(${PLUGIN_NAME} SHARED
   "flutter_daemon_plugin.cc"
 )
 apply_standard_settings(${PLUGIN_NAME})
 set_target_properties(${PLUGIN_NAME} PROPERTIES
   CXX_VISIBILITY_PRESET hidden)
-target_compile_definitions(${PLUGIN_NAME} PRIVATE FLUTTER_PLUGIN_IMPL)
+target_compile_definitions(${PLUGIN_NAME} PRIVATE
+  FLUTTER_PLUGIN_IMPL
+  "FLUTTER_DAEMON_APP_ID=\"${BINARY_NAME}\"")
 target_include_directories(${PLUGIN_NAME} INTERFACE
   "${CMAKE_CURRENT_SOURCE_DIR}/include")
 target_link_libraries(${PLUGIN_NAME} PRIVATE flutter flutter_wrapper_plugin)

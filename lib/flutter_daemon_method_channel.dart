@@ -15,6 +15,13 @@ class MethodChannelFlutterDaemon extends FlutterDaemonPlatform {
   }
 
   @override
+  Future<FlutterDaemonCapabilities> getCapabilities() async {
+    final result = await methodChannel
+        .invokeMethod<Map<Object?, Object?>>('getCapabilities');
+    return FlutterDaemonCapabilities.fromMap(result ?? const {});
+  }
+
+  @override
   Future<String> startBackgroundSync(int intervalMinutes) async {
     final result = await methodChannel.invokeMethod<String>(
       'startBackgroundSync',

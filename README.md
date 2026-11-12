@@ -140,6 +140,18 @@ If you don't add this permission then users will be required to do a couple manu
 
 ## Sailfish OS
 
+Background sync is a systemd user timer and a oneshot service. The unit name is the application's compile-time `BINARY_NAME` (`flutter_daemon_example` for this example), baked into the plugin when the app is built. Units are written to `~/.config/systemd/user/` when `startBackgroundSync` runs.
+
+`elinux/runner/main.cc` must call the plugin before the embedder parses arguments. Without that line, `startBackgroundSync` throws and does not install a unit:
+
+```cpp
+if (FlutterDaemonRunBackground(argc, argv, RegisterPlugins)) return 0;
+```
+
+That runs the `backgroundSync` Dart entrypoint when the process is started with `--background-sync`. A normal launch continues into the window.
+
+`getCapabilities()` reports what the current platform implements. On Sailfish only background sync is supported. Work constraints, battery optimization, and logs are Android-only; the example hides those sections when the capability is false, and the eLinux plugin throws if they are called anyway.
+
 Packaging is `rpm/` and `.sfosbuild/` (cyanek-sfos), pinned to flutter-sfos 3.44.0. sfosbuild runs from the repository root so `example/` can see this plugin at `path: ../`.
 
 ```bash

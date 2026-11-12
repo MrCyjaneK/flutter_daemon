@@ -9,10 +9,17 @@
 #include <memory>
 #include <string>
 
+#include <flutter_daemon/background_runner.h>
+
+#include "flutter/generated_plugin_registrant.h"
 #include "flutter_embedder_options.h"
 #include "flutter_window.h"
 
 int main(int argc, char** argv) {
+  if (FlutterDaemonRunBackground(argc, argv, RegisterPlugins)) {
+    return 0;
+  }
+
   FlutterEmbedderOptions options;
   if (!options.Parse(argc, argv)) {
     return 0;

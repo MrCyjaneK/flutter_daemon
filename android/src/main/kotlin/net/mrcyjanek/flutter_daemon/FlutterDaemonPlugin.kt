@@ -45,6 +45,14 @@ class FlutterDaemonPlugin: FlutterPlugin, MethodCallHandler {
       "getPlatformVersion" -> {
         result.success("Android ${android.os.Build.VERSION.RELEASE}")
       }
+      "getCapabilities" -> {
+        result.success(mapOf(
+          "backgroundSync" to true,
+          "constraints" to true,
+          "batteryOptimization" to true,
+          "logs" to true,
+        ))
+      }
       "startBackgroundSync" -> {
         try {
           val intervalMinutes = call.argument<Int>("intervalMinutes") ?: 15

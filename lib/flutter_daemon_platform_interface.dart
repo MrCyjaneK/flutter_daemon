@@ -2,6 +2,30 @@ import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 
 import 'flutter_daemon_method_channel.dart';
 
+class FlutterDaemonCapabilities {
+  final bool backgroundSync;
+  final bool constraints;
+  final bool batteryOptimization;
+  final bool logs;
+
+  const FlutterDaemonCapabilities({
+    required this.backgroundSync,
+    required this.constraints,
+    required this.batteryOptimization,
+    required this.logs,
+  });
+
+  factory FlutterDaemonCapabilities.fromMap(Map<Object?, Object?> map) {
+    bool flag(String key) => map[key] == true;
+    return FlutterDaemonCapabilities(
+      backgroundSync: flag('backgroundSync'),
+      constraints: flag('constraints'),
+      batteryOptimization: flag('batteryOptimization'),
+      logs: flag('logs'),
+    );
+  }
+}
+
 abstract class FlutterDaemonPlatform extends PlatformInterface {
   FlutterDaemonPlatform() : super(token: _token);
 
@@ -18,6 +42,10 @@ abstract class FlutterDaemonPlatform extends PlatformInterface {
 
   Future<String?> getPlatformVersion() {
     throw UnimplementedError('platformVersion() has not been implemented.');
+  }
+
+  Future<FlutterDaemonCapabilities> getCapabilities() {
+    throw UnimplementedError('getCapabilities() has not been implemented.');
   }
 
   Future<String> startBackgroundSync(int intervalMinutes) {

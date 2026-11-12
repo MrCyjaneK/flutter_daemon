@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_daemon/src/logging.dart';
 import 'package:path/path.dart' as p;
 import 'flutter_daemon_platform_interface.dart';
+export 'flutter_daemon_platform_interface.dart' show FlutterDaemonCapabilities;
 export 'src/logging.dart';
 
 class FlutterDaemon {
@@ -14,6 +15,10 @@ class FlutterDaemon {
   Future<String> getPlatformVersion() async {
     final String version = await _channel.invokeMethod('getPlatformVersion');
     return version;
+  }
+
+  Future<FlutterDaemonCapabilities> getCapabilities() {
+    return FlutterDaemonPlatform.instance.getCapabilities();
   }
 
   Future<String> startBackgroundSync(int intervalMinutes) {

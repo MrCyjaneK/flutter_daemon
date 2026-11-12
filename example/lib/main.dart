@@ -166,15 +166,19 @@ class _MyAppState extends State<MyApp> {
   bool _requiresDeviceIdle = false;
   List<LogEntry> _logs = [];
   String _logsError = '';
+  FlutterDaemonCapabilities _capabilities = const FlutterDaemonCapabilities(
+    backgroundSync: false,
+    constraints: false,
+    batteryOptimization: false,
+    logs: false,
+  );
 
   @override
   void initState() {
     super.initState();
     initPlatformState();
+    _loadCapabilities();
     _checkBackgroundSyncStatus();
-    _checkBatteryOptimizationStatus();
-    _loadConstraintSettings();
-    _loadLogs();
 
     _flutterDaemonPlugin.getBackgroundSyncInterval().then((value) {
       setState(() {
@@ -186,6 +190,30 @@ class _MyAppState extends State<MyApp> {
         const Duration(seconds: 5), (_) => _checkBackgroundSyncStatus());
   }
   
+  Future<void> _loadCapabilities() async {
+    try {
+      final capabilities = await _flutterDaemonPlugin.getCapabilities();
+      if (!mounted) return;
+      setState(() {
+        _capabilities = capabilities;
+      });
+      if (capabilities.constraints) {
+        await _loadConstraintSettings();
+      }
+      if (capabilities.batteryOptimization) {
+        await _checkBatteryOptimizationStatus();
+      }
+      if (capabilities.logs) {
+        await _loadLogs();
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _statusMessage = 'Failed to load capabilities: $e';
+      });
+    }
+  }
+
   // Load all constraint settings
   Future<void> _loadConstraintSettings() async {
     try {
@@ -418,8 +446,8 @@ class _MyAppState extends State<MyApp> {
                   ],
                 ),
                 const SizedBox(height: 24),
-                
-                // Add new section for Work Constraints
+
+                if (_capabilities.constraints) ...[
                 Text('Work Constraints',
                     style: Theme.of(context).textTheme.titleLarge),
                 const SizedBox(height: 8),
@@ -489,7 +517,8 @@ class _MyAppState extends State<MyApp> {
                   onPressed: _loadConstraintSettings,
                   child: const Text('Refresh Constraint Settings'),
                 ),
-                
+                ],
+
                 const SizedBox(height: 24),
                 ElevatedButton(
                   onPressed: _toggleBackgroundSync,
@@ -509,7 +538,7 @@ class _MyAppState extends State<MyApp> {
                   child: const Text('Refresh Status'),
                 ),
                 
-                // Rest of the existing UI...
+                if (_capabilities.batteryOptimization) ...[
                 const SizedBox(height: 24),
                 Text('Battery Optimization',
                     style: Theme.of(context).textTheme.titleLarge),
@@ -546,6 +575,8 @@ class _MyAppState extends State<MyApp> {
                   onPressed: _checkBatteryOptimizationStatus,
                   child: const Text('Refresh Battery Status'),
                 ),
+                ],
+                if (_capabilities.logs) ...[
                 const SizedBox(height: 24),
                 Text('Logs', style: Theme.of(context).textTheme.titleLarge),
                 const SizedBox(height: 8),
@@ -583,6 +614,7 @@ class _MyAppState extends State<MyApp> {
                       ),
                     ),
                   ),
+                ],
               ],
             ),
           ),
