@@ -61,6 +61,7 @@ in `main.dart` you need to add a function that will be called in background
 ```dart
 @pragma('vm:entry-point')
 Future<void> backgroundSync() async {
+  var acquired = false;
   try {
     print("Background sync triggered");
     print("- WidgetsFlutterBinding.ensureInitialized()");
@@ -68,11 +69,13 @@ Future<void> backgroundSync() async {
     print("- DartPluginRegistrant.ensureInitialized()");
     DartPluginRegistrant.ensureInitialized();
     print("- FlutterDaemon.markBackgroundSync()");
-    final val = await _flutterDaemonPlugin.markBackgroundSync();
-    if (val) {
+    final alreadyRunning = await _flutterDaemonPlugin.markBackgroundSync();
+    if (alreadyRunning) {
       print("Background sync already in progress");
+      await _flutterDaemonPlugin.signalBackgroundSyncComplete();
       return;
     }
+    acquired = true;
     int tick = 0;
     int maxTicks = 60;
     print("path provider test");
@@ -91,7 +94,9 @@ Future<void> backgroundSync() async {
     }
     print("Background sync completed");
   } finally {
-    _flutterDaemonPlugin.unmarkBackgroundSync();
+    if (acquired) {
+      await _flutterDaemonPlugin.unmarkBackgroundSync();
+    }
   }
 }
 ```

@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io' as io;
 import 'dart:isolate';
-import 'dart:math';
 import 'package:flutter/services.dart';
 import 'package:flutter_daemon/src/logging.dart';
 import 'package:path/path.dart' as p;
@@ -48,31 +47,12 @@ class FlutterDaemon {
   Future<bool> isBackgroundSyncActive() async {
     final io.Directory tempDir = io.Directory.systemTemp;
     print("tempDir: ${tempDir.path}");
-    final String path =
-        p.join(tempDir.path, "flutter_daemon_background", "__daemonfile");
-
     final directory = io.Directory(p.dirname(path));
     if (!directory.existsSync()) {
       directory.createSync(recursive: true);
     }
 
-    final statFile = io.File(path);
-
-    if (statFile.existsSync()) {
-      try {
-        final content = await statFile.readAsString();
-        final lastTimestamp = DateTime.parse(content);
-        final now = DateTime.now();
-        final difference = now.difference(lastTimestamp);
-
-        if (difference.inMinutes < 5) {
-          return true;
-        }
-      } catch (e) {
-        print("Error parsing timestamp: $e");
-      }
-    }
-    return false;
+    return _syncLockIsLive();
   }
 
   final String path = p.join(io.Directory.systemTemp.path,
@@ -81,72 +61,97 @@ class FlutterDaemon {
   final String pidFilePath = p.join(io.Directory.systemTemp.path,
       "flutter_daemon_background", "__daemonfile.pid");
 
+  /// Tells the Android worker that this background entrypoint is finished.
+  ///
+  /// Does not release the sync lock. Call this when [markBackgroundSync]
+  /// reports that another live sync already owns the lock, so this worker
+  /// can stop waiting without cancelling that other sync.
+  Future<void> signalBackgroundSyncComplete() async {
+    try {
+      await _channel.invokeMethod<void>('backgroundSyncComplete');
+    } catch (e) {
+      print("Failed to signal backgroundSyncComplete: $e");
+    }
+  }
+
   Future<bool> unmarkBackgroundSync() async {
-    final pidFile = io.File(pidFilePath);
-    if (pidFile.existsSync()) {
-      final pidStr = pidFile.readAsStringSync();
-      final pid = int.tryParse(pidStr);
-      if (pid != null) {
-        io.Process.killPid(pid);
-        await Future.delayed(Duration(milliseconds: 250));
-        io.Process.killPid(pid, io.ProcessSignal.sigkill);
-      }
-    }
-    final statFile = io.File(path);
-    if (statFile.existsSync()) {
-      statFile.deleteSync();
-    }
+    _deleteSyncFiles();
+    await signalBackgroundSyncComplete();
     return true;
   }
 
   Future<bool> markBackgroundSync() async {
     print("Marking background sync");
 
-    await Future.delayed(Duration(seconds: 1));
+    // The worker installs its completion handler just after launching this
+    // entrypoint. Wait until that handler is in place before deciding.
+    await Future.delayed(const Duration(seconds: 1));
 
     final directory = io.Directory(p.dirname(path));
     if (!directory.existsSync()) {
       directory.createSync(recursive: true);
     }
 
+    if (_syncLockIsLive()) {
+      print("Daemon already running");
+      return true;
+    }
+
+    _deleteSyncFiles();
     final statFile = io.File(path);
+    statFile.writeAsStringSync(DateTime.now().toIso8601String());
+    io.File(pidFilePath).writeAsStringSync('${io.pid}');
+    _startHeartbeat(statFile.path);
+    return false;
+  }
 
-    if (statFile.existsSync()) {
+  bool _syncLockIsLive() {
+    final statFile = io.File(path);
+    final pidFile = io.File(pidFilePath);
+    if (!statFile.existsSync() || !pidFile.existsSync()) return false;
+    try {
+      final pid = int.tryParse(pidFile.readAsStringSync().trim());
+      if (pid == null || !_isPidAlive(pid)) return false;
+      final lastTimestamp = DateTime.parse(statFile.readAsStringSync().trim());
+      return DateTime.now().difference(lastTimestamp).inMinutes < 5;
+    } catch (e) {
+      print("Error reading background sync lock: $e");
+      return false;
+    }
+  }
+
+  bool _isPidAlive(int pid) {
+    if (pid <= 0) return false;
+    if (pid == io.pid) return true;
+    return io.Directory('/proc/$pid').existsSync();
+  }
+
+  void _deleteSyncFiles() {
+    final statFile = io.File(path);
+    final pidFile = io.File(pidFilePath);
+    if (statFile.existsSync()) statFile.deleteSync();
+    if (pidFile.existsSync()) pidFile.deleteSync();
+  }
+
+  void _startHeartbeat(String statPath) {
+    unawaited(Isolate.run(() async {
+      final file = io.File(statPath);
+      final handle = file.openSync(mode: io.FileMode.writeOnly);
       try {
-        final content = await statFile.readAsString();
-        final lastTimestamp = DateTime.parse(content);
-        final now = DateTime.now();
-        final difference = now.difference(lastTimestamp);
-
-        if (difference.inMinutes < 5) {
-          print(
-              "Daemon already running (last heartbeat: ${difference.inMinutes} minutes ago)");
-          return true;
+        while (file.existsSync()) {
+          final bytes = utf8.encode(DateTime.now().toIso8601String());
+          handle.setPositionSync(0);
+          handle.writeFromSync(bytes);
+          handle.truncateSync(bytes.length);
+          handle.flushSync();
+          await Future.delayed(const Duration(seconds: 1));
         }
       } catch (e) {
-        print("Error parsing timestamp: $e");
-      }
-    } else {
-      statFile.createSync(recursive: true);
-    }
-    io.File(pidFilePath).writeAsStringSync(io.pid.toString());
-
-    final rootToken = ServicesBinding.rootIsolateToken;
-    final randomId = Random.secure().nextInt(1000000);
-    unawaited(Isolate.run(() async {
-      BackgroundIsolateBinaryMessenger.ensureInitialized(rootToken!);
-      while (true) {
-        if (!statFile.existsSync()) {
-          print("[$randomId] Stopping background sync");
-          final channel = MethodChannel('flutter_daemon');
-          await channel.invokeMethod('backgroundSyncComplete');
-          return;
-        }
-        await statFile.writeAsString(DateTime.now().toIso8601String());
-        await Future.delayed(Duration(seconds: 1));
+        print("Heartbeat stopped: $e");
+      } finally {
+        handle.closeSync();
       }
     }));
-    return false;
   }
 
   Future<bool> setNetworkType(bool useUnmetered) {
