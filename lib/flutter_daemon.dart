@@ -10,11 +10,6 @@ export 'flutter_daemon_platform_interface.dart' show FlutterDaemonCapabilities;
 class FlutterDaemon {
   static const MethodChannel _channel = MethodChannel('flutter_daemon');
 
-  Future<String> getPlatformVersion() async {
-    final String version = await _channel.invokeMethod('getPlatformVersion');
-    return version;
-  }
-
   Future<FlutterDaemonCapabilities> getCapabilities() {
     return FlutterDaemonPlatform.instance.getCapabilities();
   }
@@ -45,17 +40,6 @@ class FlutterDaemon {
 
   Future<bool> openBatteryOptimizationSettings() {
     return FlutterDaemonPlatform.instance.openBatteryOptimizationSettings();
-  }
-
-  Future<bool> isBackgroundSyncActive() async {
-    final io.Directory tempDir = io.Directory.systemTemp;
-    print("tempDir: ${tempDir.path}");
-    final directory = io.Directory(p.dirname(path));
-    if (!directory.existsSync()) {
-      directory.createSync(recursive: true);
-    }
-
-    return _syncLockIsLive();
   }
 
   final String path = p.join(io.Directory.systemTemp.path,

@@ -132,7 +132,7 @@ If you don't add this permission then users will be required to do a couple manu
 
 ### iOS
 
-Background sync is a `BGProcessingTask` and requires iOS 15. `intervalMinutes` is required and must be at least 1. It is written to `earliestBeginDate` as `now + intervalMinutes`: iOS will not launch the task before that, and the request stays queued after it. The system runs it while the device is idle and prefers the device to be charging. Each run submits the next request with the same interval. `startBackgroundSync` throws if the launch handler was not registered.
+Background sync is a `BGProcessingTask` and requires iOS 15. `intervalMinutes` is required and must be at least 1. It is written to `earliestBeginDate` as `now + intervalMinutes`: iOS will not launch the task before that, and the request stays queued after it. The system runs it while the device is idle and prefers the device to be charging. Each run submits the next request with the same interval. If sync is enabled and iOS has no pending request, the next launch submits one again. `startBackgroundSync` throws if the launch handler was not registered.
 
 Register the handler from `application(_:didFinishLaunchingWithOptions:)` on every launch, including a cold launch that exists only to service the task, before that method returns:
 
@@ -142,7 +142,7 @@ import flutter_daemon
 FlutterDaemonPlugin.registerBackgroundProcessing()
 ```
 
-The example does this before `super.application`. Plugin registration on the current Flutter template happens later, from `didInitializeImplicitFlutterEngine`.
+The example does this before `super.application`. The background engine loads `GeneratedPluginRegistrant` itself, which is the same plugin set as the foreground engine. Foreground registration on the current Flutter template happens later, from `didInitializeImplicitFlutterEngine`.
 
 Add both keys to the host `Info.plist`. The identifier must match `Bundle.main.bundleIdentifier + ".flutter_daemon.processing"`. Xcode expands `$(PRODUCT_BUNDLE_IDENTIFIER)` to that bundle id.
 

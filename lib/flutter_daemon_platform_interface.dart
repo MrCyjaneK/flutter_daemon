@@ -41,10 +41,6 @@ abstract class FlutterDaemonPlatform extends PlatformInterface {
     _instance = instance;
   }
 
-  Future<String?> getPlatformVersion() {
-    throw UnimplementedError('platformVersion() has not been implemented.');
-  }
-
   Future<FlutterDaemonCapabilities> getCapabilities() {
     throw UnimplementedError('getCapabilities() has not been implemented.');
   }

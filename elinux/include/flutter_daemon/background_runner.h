@@ -8,9 +8,14 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
+#include <dirent.h>
+#include <fstream>
 #include <iostream>
+#include <iterator>
 #include <string>
 #include <thread>
+#include <unistd.h>
 
 #include "flutter_daemon_plugin.h"
 
@@ -61,6 +66,62 @@ inline bool IsBackgroundInvocation(int argc, char** argv) {
     }
   }
   return false;
+}
+
+inline std::string ReadLink(const std::string& path) {
+  char buffer[4096];
+  const ssize_t n = ::readlink(path.c_str(), buffer, sizeof(buffer) - 1);
+  if (n < 0) {
+    return "";
+  }
+  buffer[n] = '\0';
+  return std::string(buffer);
+}
+
+inline bool CmdlineRequestsBackgroundSync(const std::string& path) {
+  std::ifstream in(path, std::ios::binary);
+  if (!in) {
+    return false;
+  }
+  const std::string data((std::istreambuf_iterator<char>(in)),
+                         std::istreambuf_iterator<char>());
+  return data.find("--background-sync") != std::string::npos;
+}
+
+// The GUI and the sync process are the same executable. A GUI process has
+// this exe and does not pass --background-sync.
+inline bool GuiProcessIsRunning() {
+  const std::string self_exe = ReadLink("/proc/self/exe");
+  if (self_exe.empty()) {
+    return false;
+  }
+  const pid_t self_pid = ::getpid();
+  DIR* directory = ::opendir("/proc");
+  if (directory == nullptr) {
+    return false;
+  }
+  bool found = false;
+  while (const dirent* entry = ::readdir(directory)) {
+    if (entry->d_name[0] < '1' || entry->d_name[0] > '9') {
+      continue;
+    }
+    char* end = nullptr;
+    const long pid = std::strtol(entry->d_name, &end, 10);
+    if (end == entry->d_name || *end != '\0' || pid == self_pid) {
+      continue;
+    }
+    const std::string proc = std::string("/proc/") + entry->d_name;
+    if (ReadLink(proc + "/exe") != self_exe) {
+      continue;
+    }
+    if (CmdlineRequestsBackgroundSync(proc + "/cmdline")) {
+      continue;
+    }
+    found = true;
+    break;
+  }
+  ::closedir(directory);
+  return found;
 }
 
 template <typename Process, typename Dispatch>
@@ -203,6 +264,11 @@ inline int FlutterDaemonRunBackground(int argc, char** argv,
   }
 
   FlutterDaemonResetBackgroundSyncFinished();
+  if (flutter_daemon_internal::GuiProcessIsRunning()) {
+    std::cerr << "flutter_daemon: app is in the foreground, skipping background sync"
+              << std::endl;
+    return 1;
+  }
   const std::wstring bundle =
       flutter_daemon_internal::Widen(flutter_daemon_internal::BundlePath(argc, argv));
   if (flutter_daemon_internal::RunHeadless(bundle, register_plugins)) {

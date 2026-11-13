@@ -8,13 +8,6 @@ class MethodChannelFlutterDaemon extends FlutterDaemonPlatform {
   final methodChannel = const MethodChannel('flutter_daemon');
 
   @override
-  Future<String?> getPlatformVersion() async {
-    final version =
-        await methodChannel.invokeMethod<String>('getPlatformVersion');
-    return version;
-  }
-
-  @override
   Future<FlutterDaemonCapabilities> getCapabilities() async {
     final result = await methodChannel
         .invokeMethod<Map<Object?, Object?>>('getCapabilities');

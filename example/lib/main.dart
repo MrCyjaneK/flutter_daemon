@@ -5,7 +5,6 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'dart:async';
 
-import 'package:flutter/services.dart';
 import 'package:flutter_daemon/flutter_daemon.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:http/http.dart' as http;
@@ -149,7 +148,6 @@ class MyApp extends StatefulWidget {
 class _MyAppState extends State<MyApp> {
   static const _presetIntervals = [1, 15, 30, 60, 120, 180, 360, 720, 1440];
 
-  String _platformVersion = 'Unknown';
   bool _isSyncActive = false;
   String _statusMessage = '';
   Timer? _statusCheckTimer;
@@ -175,7 +173,6 @@ class _MyAppState extends State<MyApp> {
   @override
   void initState() {
     super.initState();
-    initPlatformState();
     _loadCapabilities();
     _checkBackgroundSyncStatus();
     _flutterDaemonPlugin.getBackgroundSyncInterval().then((value) {
@@ -241,21 +238,6 @@ class _MyAppState extends State<MyApp> {
   void dispose() {
     _statusCheckTimer?.cancel();
     super.dispose();
-  }
-
-  Future<void> initPlatformState() async {
-    String platformVersion;
-    try {
-      platformVersion = await _flutterDaemonPlugin.getPlatformVersion();
-    } on PlatformException {
-      platformVersion = 'Failed to get platform version.';
-    }
-
-    if (!mounted) return;
-
-    setState(() {
-      _platformVersion = platformVersion;
-    });
   }
 
   Future<void> _toggleBackgroundSync() async {
@@ -392,9 +374,6 @@ class _MyAppState extends State<MyApp> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Running on: $_platformVersion',
-                    style: Theme.of(context).textTheme.titleMedium),
-                const SizedBox(height: 24),
                 Text('Background Sync Status',
                     style: Theme.of(context).textTheme.titleLarge),
                 const SizedBox(height: 8),

@@ -1,5 +1,6 @@
 import BackgroundTasks
 import Flutter
+import ObjectiveC
 import UIKit
 
 public class FlutterDaemonPlugin: NSObject, FlutterPlugin {
@@ -55,12 +56,19 @@ public class FlutterDaemonPlugin: NSObject, FlutterPlugin {
       }
       handle(processingTask)
     }
+    // submit() replaces any pending request, so only restore when iOS dropped it.
+    BGTaskScheduler.shared.getPendingTaskRequests { requests in
+      guard !requests.contains(where: { $0.identifier == identifier }) else {
+        return
+      }
+      DispatchQueue.main.async {
+        scheduleNextIfEnabled()
+      }
+    }
   }
 
   public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
     switch call.method {
-    case "getPlatformVersion":
-      result("iOS " + UIDevice.current.systemVersion)
     case "getCapabilities":
       result([
         "backgroundSync": true,
@@ -193,6 +201,12 @@ public class FlutterDaemonPlugin: NSObject, FlutterPlugin {
       // the schedule. Cancel does not affect a task that has already started.
       scheduleNextIfEnabled()
 
+      if UIApplication.shared.applicationState == .active {
+        NSLog("flutter_daemon: app is in the foreground, skipping background sync")
+        task.setTaskCompleted(success: true)
+        return
+      }
+
       if activeTask != nil || backgroundEngine != nil {
         task.setTaskCompleted(success: true)
         return
@@ -244,21 +258,17 @@ public class FlutterDaemonPlugin: NSObject, FlutterPlugin {
         allowHeadlessExecution: true)
       backgroundEngine = engine
 
-      // The engine must be running before a message handler can be set.
-      // Register on this engine directly. DartPluginRegistrant only binds
-      // Dart implementations; a second registrarForPlugin: for this key
-      // asserts, so the background entrypoint must not register it again.
+      // Message handlers can only be set after run. GeneratedPluginRegistrant
+      // registers this plugin; a second registrarForPlugin: for the same key asserts.
       guard engine.run(withEntrypoint: "backgroundSync") else {
         NSLog("flutter_daemon: failed to run backgroundSync")
         finish(success: false)
         return
       }
-      guard let registrar = engine.registrar(forPlugin: "FlutterDaemonPlugin") else {
-        NSLog("flutter_daemon: failed to register the background engine plugin")
+      guard registerHostPlugins(on: engine) else {
         finish(success: false)
         return
       }
-      FlutterDaemonPlugin.register(with: registrar)
 
       DispatchQueue.main.asyncAfter(deadline: .now() + completionTimeout) {
         if token == runToken && activeTask != nil {
@@ -267,6 +277,22 @@ public class FlutterDaemonPlugin: NSObject, FlutterPlugin {
         finish(success: false)
       }
     }
+  }
+
+  private static func registerHostPlugins(on engine: FlutterEngine) -> Bool {
+    guard let registrant = NSClassFromString("GeneratedPluginRegistrant") else {
+      NSLog("flutter_daemon: GeneratedPluginRegistrant was not found")
+      return false
+    }
+    let selector = NSSelectorFromString("registerWithRegistry:")
+    guard let method = class_getClassMethod(registrant, selector) else {
+      NSLog("flutter_daemon: GeneratedPluginRegistrant has no registerWithRegistry:")
+      return false
+    }
+    typealias Register = @convention(c) (AnyClass, Selector, FlutterEngine) -> Void
+    let register = unsafeBitCast(method_getImplementation(method), to: Register.self)
+    register(registrant, selector, engine)
+    return true
   }
 
   private static func clearLockFiles() {
