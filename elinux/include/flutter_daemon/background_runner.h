@@ -16,8 +16,10 @@
 #include <string>
 #include <thread>
 #include <unistd.h>
+#include <vector>
 
 #include "flutter_daemon_plugin.h"
+#include "host_path.h"
 
 // Call this at the start of main(), before the embedder parses arguments:
 //
@@ -35,28 +37,13 @@ inline std::wstring Widen(const std::string& path) {
   return std::wstring(path.begin(), path.end());
 }
 
-inline std::string AbsolutePath(const std::string& path) {
-  char* resolved = realpath(path.c_str(), nullptr);
-  if (resolved == nullptr) {
-    return path;
-  }
-  std::string absolute(resolved);
-  free(resolved);
-  return absolute;
-}
-
 inline std::string BundlePath(int argc, char** argv) {
-  for (int i = 1; i < argc; ++i) {
-    const std::string arg(argv[i]);
-    const std::string prefix = "--bundle=";
-    if (arg.compare(0, prefix.size(), prefix) == 0) {
-      return AbsolutePath(arg.substr(prefix.size()));
-    }
-    if ((arg == "--bundle" || arg == "-b") && i + 1 < argc) {
-      return AbsolutePath(argv[i + 1]);
-    }
+  std::vector<std::string> args;
+  args.reserve(static_cast<size_t>(argc));
+  for (int i = 0; i < argc; ++i) {
+    args.emplace_back(argv[i]);
   }
-  return AbsolutePath("./bundle");
+  return flutter_daemon::AbsolutePath(flutter_daemon::BundleFromArguments(args));
 }
 
 inline bool IsBackgroundInvocation(int argc, char** argv) {
@@ -66,16 +53,6 @@ inline bool IsBackgroundInvocation(int argc, char** argv) {
     }
   }
   return false;
-}
-
-inline std::string ReadLink(const std::string& path) {
-  char buffer[4096];
-  const ssize_t n = ::readlink(path.c_str(), buffer, sizeof(buffer) - 1);
-  if (n < 0) {
-    return "";
-  }
-  buffer[n] = '\0';
-  return std::string(buffer);
 }
 
 inline bool CmdlineRequestsBackgroundSync(const std::string& path) {
@@ -91,7 +68,7 @@ inline bool CmdlineRequestsBackgroundSync(const std::string& path) {
 // The GUI and the sync process are the same executable. A GUI process has
 // this exe and does not pass --background-sync.
 inline bool GuiProcessIsRunning() {
-  const std::string self_exe = ReadLink("/proc/self/exe");
+  const std::string self_exe = flutter_daemon::ReadLink("/proc/self/exe");
   if (self_exe.empty()) {
     return false;
   }
@@ -111,7 +88,7 @@ inline bool GuiProcessIsRunning() {
       continue;
     }
     const std::string proc = std::string("/proc/") + entry->d_name;
-    if (ReadLink(proc + "/exe") != self_exe) {
+    if (flutter_daemon::ReadLink(proc + "/exe") != self_exe) {
       continue;
     }
     if (CmdlineRequestsBackgroundSync(proc + "/cmdline")) {

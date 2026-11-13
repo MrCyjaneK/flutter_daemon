@@ -1,4 +1,5 @@
 #include "include/flutter_daemon/flutter_daemon_plugin.h"
+#include "include/flutter_daemon/host_path.h"
 
 #include <flutter/method_channel.h>
 #include <flutter/plugin_registrar.h>
@@ -15,7 +16,6 @@
 #include <cstring>
 #include <exception>
 #include <fstream>
-#include <map>
 #include <memory>
 #include <pwd.h>
 #include <sstream>
@@ -79,19 +79,25 @@ bool MkdirParents(const std::string& path) {
   return true;
 }
 
-std::string SystemdWord(const std::string& value) {
-  if (value.find_first_of(" \t\"\\") == std::string::npos) {
-    return value;
-  }
-  std::string out = "\"";
+std::string EscapeSystemd(const std::string& value) {
+  std::string out;
   for (char c : value) {
+    if (c == '\n' || c == '\r') {
+      continue;
+    }
     if (c == '"' || c == '\\') {
       out.push_back('\\');
     }
     out.push_back(c);
   }
-  out.push_back('"');
   return out;
+}
+
+std::string SystemdWord(const std::string& value) {
+  if (value.find_first_of(" \t\"\\") == std::string::npos) {
+    return value;
+  }
+  return "\"" + EscapeSystemd(value) + "\"";
 }
 
 bool WriteFile(const std::string& path, const std::string& contents, std::string* error) {
@@ -198,38 +204,8 @@ std::vector<std::string> ReadCmdline() {
   return args;
 }
 
-std::string BundleFromCmdline() {
-  const std::vector<std::string> args = ReadCmdline();
-  for (size_t i = 0; i < args.size(); ++i) {
-    const std::string prefix = "--bundle=";
-    if (args[i].compare(0, prefix.size(), prefix) == 0) {
-      return args[i].substr(prefix.size());
-    }
-    if ((args[i] == "--bundle" || args[i] == "-b") && i + 1 < args.size()) {
-      return args[i + 1];
-    }
-  }
-  return "./bundle";
-}
-
-std::string AbsolutePath(const std::string& path) {
-  char* resolved = realpath(path.c_str(), nullptr);
-  if (resolved == nullptr) {
-    return path;
-  }
-  std::string absolute(resolved);
-  free(resolved);
-  return absolute;
-}
-
 std::string ExecutablePath() {
-  char buffer[4096];
-  const ssize_t n = readlink("/proc/self/exe", buffer, sizeof(buffer) - 1);
-  if (n < 0) {
-    return "";
-  }
-  buffer[n] = '\0';
-  return std::string(buffer);
+  return flutter_daemon::ReadLink("/proc/self/exe");
 }
 
 std::string UnitDir() { return HomeDir() + "/.config/systemd/user"; }
@@ -251,17 +227,8 @@ std::string ServiceUnit(const std::string& exe, const std::string& bundle,
       << "[Service]\n"
       << "Type=oneshot\n";
   if (!library_path.empty()) {
-    std::string escaped;
-    for (char c : library_path) {
-      if (c == '\n' || c == '\r') {
-        continue;
-      }
-      if (c == '"' || c == '\\') {
-        escaped.push_back('\\');
-      }
-      escaped.push_back(c);
-    }
-    out << "Environment=\"LD_LIBRARY_PATH=" << escaped << "\"\n";
+    out << "Environment=\"LD_LIBRARY_PATH=" << EscapeSystemd(library_path)
+        << "\"\n";
   }
   out << "ExecStart=" << SystemdWord(exe) << " --bundle=" << SystemdWord(bundle)
       << " --background-sync\n"
@@ -342,7 +309,8 @@ bool StartSync(int interval_minutes, std::string* message) {
     *message = "failed to resolve /proc/self/exe";
     return false;
   }
-  const std::string bundle = AbsolutePath(BundleFromCmdline());
+  const std::string bundle = flutter_daemon::AbsolutePath(
+      flutter_daemon::BundleFromArguments(ReadCmdline()));
   const char* library_path = getenv("LD_LIBRARY_PATH");
   const std::string libraries = library_path == nullptr ? "" : library_path;
 
@@ -434,9 +402,7 @@ class FlutterDaemonPlugin : public flutter::Plugin {
  public:
   static void RegisterWithRegistrar(flutter::PluginRegistrar* registrar);
 
-  FlutterDaemonPlugin();
-
-  virtual ~FlutterDaemonPlugin();
+  virtual ~FlutterDaemonPlugin() = default;
 
  private:
   void HandleMethodCall(
@@ -460,10 +426,6 @@ void FlutterDaemonPlugin::RegisterWithRegistrar(
 
   registrar->AddPlugin(std::move(plugin));
 }
-
-FlutterDaemonPlugin::FlutterDaemonPlugin() {}
-
-FlutterDaemonPlugin::~FlutterDaemonPlugin() {}
 
 void FlutterDaemonPlugin::HandleMethodCall(
     const flutter::MethodCall<flutter::EncodableValue>& method_call,

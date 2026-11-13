@@ -1,10 +1,8 @@
-import 'dart:io';
+import 'dart:async';
 import 'dart:math';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
-import 'dart:async';
-
 import 'package:flutter_daemon/flutter_daemon.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:http/http.dart' as http;
@@ -14,24 +12,22 @@ final _flutterDaemonPlugin = FlutterDaemon();
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  print("BACKGROUND SYNC TEST");
   runApp(const MyApp());
 }
 
 Future<void> _checkNetworkLoop() async {
   final wsStop = _testWebSocketConnection();
-  await Future.delayed(const Duration(seconds: 15));
-  await wsStop();
+  await Future<void>.delayed(const Duration(seconds: 15));
+  wsStop();
   for (int i = 0; i < 60; i++) {
     try {
       await _checkNetwork();
     } catch (e) {
-      print("Error checking network: $e");
+      debugPrint('flutter_daemon example: network check failed: $e');
     }
     await Future.delayed(const Duration(seconds: 1));
   }
 }
-
 
 Future<void> _checkNetwork() async {
   final urls = [
@@ -44,9 +40,9 @@ Future<void> _checkNetwork() async {
   final url = urls[Random().nextInt(urls.length)];
   try {
     final response = await http.get(Uri.parse(url));
-    print("Network connection successful (${response.statusCode}) to $url");
+    debugPrint('flutter_daemon example: ${response.statusCode} from $url');
   } catch (e) {
-    print("Error checking network: $url: $e");
+    debugPrint('flutter_daemon example: network check failed for $url: $e');
   }
 }
 
@@ -54,84 +50,76 @@ Future<void> _checkNetwork() async {
 Future<void> backgroundSync() async {
   var acquired = false;
   try {
-    print("Background sync triggered");
-    print("- WidgetsFlutterBinding.ensureInitialized()");
+    debugPrint('flutter_daemon example: background sync triggered');
     WidgetsFlutterBinding.ensureInitialized();
-    print("- DartPluginRegistrant.ensureInitialized()");
     DartPluginRegistrant.ensureInitialized();
-    print("- FlutterDaemon.markBackgroundSync()");
     final alreadyRunning = await _flutterDaemonPlugin.markBackgroundSync();
     if (alreadyRunning) {
-      print("Background sync already in progress");
+      debugPrint('flutter_daemon example: background sync already in progress');
       await _flutterDaemonPlugin.signalBackgroundSyncComplete();
       return;
     }
     acquired = true;
-    int tick = 0;
-    int maxTicks = 60;
-    print("path provider test");
     try {
       final path = await getApplicationDocumentsDirectory();
-      print("path: ${path.path}");
+      debugPrint('flutter_daemon example: documents path ${path.path}');
     } catch (e) {
-      print("Error: $e");
+      debugPrint('flutter_daemon example: path provider failed: $e');
     }
     await _checkNetworkLoop();
-
-    while (tick < maxTicks) {
-      print("Tick: ${tick++}");
-      sleep(Duration(seconds: 1));
+    for (var tick = 0; tick < 60; tick++) {
+      debugPrint('flutter_daemon example: tick $tick');
+      await Future<void>.delayed(const Duration(seconds: 1));
       await _checkNetwork();
     }
-    print("Background sync completed");
+    debugPrint('flutter_daemon example: background sync completed');
   } finally {
     if (acquired) {
-      print("Unmarking background sync");
       await _flutterDaemonPlugin.unmarkBackgroundSync();
     }
   }
 }
 
-Function _testWebSocketConnection() {
+void Function() _testWebSocketConnection() {
   final wsUrl = Uri.parse('wss://echo.websocket.org');
   WebSocketChannel? channel;
   Timer? timer;
-  
+
   try {
     channel = WebSocketChannel.connect(wsUrl);
-    print("WebSocket connection initiated to echo.websocket.org");
-    
+    debugPrint('flutter_daemon example: websocket connecting');
+
     channel.stream.listen(
       (message) {
-        print("WebSocket echo received: $message");
+        debugPrint('flutter_daemon example: websocket echo: $message');
       },
       onError: (error) {
-        print("WebSocket error: $error");
+        debugPrint('flutter_daemon example: websocket error: $error');
         timer?.cancel();
         channel?.sink.close();
       },
       onDone: () {
-        print("WebSocket connection closed");
+        debugPrint('flutter_daemon example: websocket closed');
         timer?.cancel();
       },
     );
-    
+
     int messageCount = 0;
     timer = Timer.periodic(const Duration(milliseconds: 750), (_) {
       if (channel?.sink != null) {
         final message = "Test message ${messageCount++}";
         channel?.sink.add(message);
-        print("WebSocket message sent: $message");
+        debugPrint('flutter_daemon example: websocket sent: $message');
       }
     });
-    
+
     return () {
-      print("Stopping WebSocket connection test");
+      debugPrint('flutter_daemon example: websocket stopping');
       timer?.cancel();
       channel?.sink.close();
     };
   } catch (e) {
-    print("Error establishing WebSocket connection: $e");
+    debugPrint('flutter_daemon example: websocket failed: $e');
     timer?.cancel();
     channel?.sink.close();
     return () {};
@@ -151,6 +139,7 @@ class _MyAppState extends State<MyApp> {
   bool _isSyncActive = false;
   String _statusMessage = '';
   Timer? _statusCheckTimer;
+  Timer? _batteryPoll;
   int _syncIntervalMinutes = 15;
   bool _isBatteryOptDisabled = false;
   bool _useUnmeteredNetwork = false;
@@ -166,7 +155,8 @@ class _MyAppState extends State<MyApp> {
 
   List<int> get _intervalChoices {
     final minimum = _capabilities.minimumIntervalMinutes;
-    final choices = _presetIntervals.where((value) => value >= minimum).toList();
+    final choices =
+        _presetIntervals.where((value) => value >= minimum).toList();
     return choices.isEmpty ? [minimum] : choices;
   }
 
@@ -185,7 +175,9 @@ class _MyAppState extends State<MyApp> {
 
   int _allowedInterval(int? minutes) {
     final choices = _intervalChoices;
-    return minutes != null && choices.contains(minutes) ? minutes : choices.first;
+    return minutes != null && choices.contains(minutes)
+        ? minutes
+        : choices.first;
   }
 
   Future<void> _loadCapabilities() async {
@@ -216,7 +208,6 @@ class _MyAppState extends State<MyApp> {
       final batteryNotLow = await _flutterDaemonPlugin.getBatteryNotLow();
       final requiresCharging = await _flutterDaemonPlugin.getRequiresCharging();
       final deviceIdle = await _flutterDaemonPlugin.getDeviceIdle();
-      
       if (mounted) {
         setState(() {
           _useUnmeteredNetwork = useUnmetered;
@@ -237,29 +228,25 @@ class _MyAppState extends State<MyApp> {
   @override
   void dispose() {
     _statusCheckTimer?.cancel();
+    _batteryPoll?.cancel();
     super.dispose();
+  }
+
+  void _showStatus(String message) {
+    if (!mounted) return;
+    setState(() => _statusMessage = message);
   }
 
   Future<void> _toggleBackgroundSync() async {
     try {
-      if (_isSyncActive) {
-        final result = await _flutterDaemonPlugin.stopBackgroundSync();
-        setState(() {
-          _statusMessage = result;
-        });
-      } else {
-        final result = await _flutterDaemonPlugin
-            .startBackgroundSync(_allowedInterval(_syncIntervalMinutes));
-        setState(() {
-          _statusMessage = result;
-        });
-      }
-
+      final result = _isSyncActive
+          ? await _flutterDaemonPlugin.stopBackgroundSync()
+          : await _flutterDaemonPlugin
+              .startBackgroundSync(_allowedInterval(_syncIntervalMinutes));
+      _showStatus(result);
       await _checkBackgroundSyncStatus();
     } catch (e) {
-      setState(() {
-        _statusMessage = 'Error: $e';
-      });
+      _showStatus('Error: $e');
     }
   }
 
@@ -282,7 +269,8 @@ class _MyAppState extends State<MyApp> {
 
   Future<void> _checkBatteryOptimizationStatus() async {
     try {
-      final isDisabled = await _flutterDaemonPlugin.isBatteryOptimizationDisabled();
+      final isDisabled =
+          await _flutterDaemonPlugin.isBatteryOptimizationDisabled();
       if (mounted) {
         setState(() {
           _isBatteryOptDisabled = isDisabled;
@@ -300,14 +288,15 @@ class _MyAppState extends State<MyApp> {
   Future<void> _requestDisableBatteryOptimization() async {
     try {
       await _flutterDaemonPlugin.requestDisableBatteryOptimization();
-      for (int i = 0; i < 4 * 60; i++) {
-        await _checkBatteryOptimizationStatus();
-        await Future.delayed(const Duration(milliseconds: 250));
-      }
-    } catch (e) {
-      setState(() {
-        _statusMessage = 'Error requesting battery optimization: $e';
+      _batteryPoll?.cancel();
+      var remaining = 60;
+      _batteryPoll = Timer.periodic(const Duration(seconds: 1), (timer) {
+        remaining -= 1;
+        _checkBatteryOptimizationStatus();
+        if (remaining <= 0 || _isBatteryOptDisabled) timer.cancel();
       });
+    } catch (e) {
+      _showStatus('Error requesting battery optimization: $e');
     }
   }
 
@@ -315,9 +304,7 @@ class _MyAppState extends State<MyApp> {
     try {
       await _flutterDaemonPlugin.openBatteryOptimizationSettings();
     } catch (e) {
-      setState(() {
-        _statusMessage = 'Error opening battery settings: $e';
-      });
+      _showStatus('Error opening battery settings: $e');
     }
   }
 
@@ -356,7 +343,11 @@ class _MyAppState extends State<MyApp> {
       subtitle: Text(subtitle),
       value: value,
       onChanged: (next) async {
-        if (await apply(next) && mounted) setState(() => store(next));
+        try {
+          if (await apply(next) && mounted) setState(() => store(next));
+        } catch (e) {
+          _showStatus('Failed to update constraint: $e');
+        }
       },
     );
   }
@@ -377,7 +368,8 @@ class _MyAppState extends State<MyApp> {
                 Text('Background Sync Status',
                     style: Theme.of(context).textTheme.titleLarge),
                 const SizedBox(height: 8),
-                _statusDot(_isSyncActive, _isSyncActive ? 'Active' : 'Inactive'),
+                _statusDot(
+                    _isSyncActive, _isSyncActive ? 'Active' : 'Inactive'),
                 if (_statusMessage.isNotEmpty)
                   Padding(
                     padding: const EdgeInsets.only(top: 8.0),
@@ -401,7 +393,6 @@ class _MyAppState extends State<MyApp> {
                   },
                 ),
                 const SizedBox(height: 24),
-
                 if (_capabilities.constraints) ...[
                   Text('Work Constraints',
                       style: Theme.of(context).textTheme.titleLarge),
@@ -439,15 +430,14 @@ class _MyAppState extends State<MyApp> {
                     child: const Text('Refresh Constraint Settings'),
                   ),
                 ],
-
                 const SizedBox(height: 24),
                 ElevatedButton(
                   onPressed: _toggleBackgroundSync,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: _isSyncActive ? Colors.red : Colors.green,
                     foregroundColor: Colors.white,
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 24, vertical: 12),
                   ),
                   child: Text(_isSyncActive
                       ? 'Stop Background Sync'
@@ -458,31 +448,30 @@ class _MyAppState extends State<MyApp> {
                   onPressed: _checkBackgroundSyncStatus,
                   child: const Text('Refresh Status'),
                 ),
-                
                 if (_capabilities.batteryOptimization) ...[
-                const SizedBox(height: 24),
-                Text('Battery Optimization',
-                    style: Theme.of(context).textTheme.titleLarge),
-                const SizedBox(height: 8),
-                _statusDot(
-                  _isBatteryOptDisabled,
-                  _isBatteryOptDisabled ? 'Disabled' : 'Enabled',
-                ),
-                const SizedBox(height: 16),
-                ElevatedButton(
-                  onPressed: _requestDisableBatteryOptimization,
-                  child: const Text('Request Disable Battery Optimization'),
-                ),
-                const SizedBox(height: 8),
-                OutlinedButton(
-                  onPressed: _openBatteryOptimizationSettings,
-                  child: const Text('Open Battery Settings'),
-                ),
-                const SizedBox(height: 8),
-                OutlinedButton(
-                  onPressed: _checkBatteryOptimizationStatus,
-                  child: const Text('Refresh Battery Status'),
-                ),
+                  const SizedBox(height: 24),
+                  Text('Battery Optimization',
+                      style: Theme.of(context).textTheme.titleLarge),
+                  const SizedBox(height: 8),
+                  _statusDot(
+                    _isBatteryOptDisabled,
+                    _isBatteryOptDisabled ? 'Disabled' : 'Enabled',
+                  ),
+                  const SizedBox(height: 16),
+                  ElevatedButton(
+                    onPressed: _requestDisableBatteryOptimization,
+                    child: const Text('Request Disable Battery Optimization'),
+                  ),
+                  const SizedBox(height: 8),
+                  OutlinedButton(
+                    onPressed: _openBatteryOptimizationSettings,
+                    child: const Text('Open Battery Settings'),
+                  ),
+                  const SizedBox(height: 8),
+                  OutlinedButton(
+                    onPressed: _checkBatteryOptimizationStatus,
+                    child: const Text('Refresh Battery Status'),
+                  ),
                 ],
               ],
             ),

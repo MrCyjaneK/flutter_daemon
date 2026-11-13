@@ -64,6 +64,11 @@ abstract class FlutterDaemonPlatform extends PlatformInterface {
         'getBackgroundSyncInterval() has not been implemented.');
   }
 
+  Future<void> signalBackgroundSyncComplete() {
+    throw UnimplementedError(
+        'signalBackgroundSyncComplete() has not been implemented.');
+  }
+
   Future<bool> isBatteryOptimizationDisabled() {
     throw UnimplementedError(
         'isBatteryOptimizationDisabled() has not been implemented.');
@@ -83,34 +88,34 @@ abstract class FlutterDaemonPlatform extends PlatformInterface {
     throw UnimplementedError(
         'setNetworkType(useUnmetered: $useUnmetered) has not been implemented.');
   }
-  
+
   Future<bool> getNetworkType() {
     throw UnimplementedError('getNetworkType() has not been implemented.');
   }
-  
+
   Future<bool> setBatteryNotLow(bool enabled) {
     throw UnimplementedError(
         'setBatteryNotLow(enabled: $enabled) has not been implemented.');
   }
-  
+
   Future<bool> getBatteryNotLow() {
     throw UnimplementedError('getBatteryNotLow() has not been implemented.');
   }
-  
+
   Future<bool> setRequiresCharging(bool enabled) {
     throw UnimplementedError(
         'setRequiresCharging(enabled: $enabled) has not been implemented.');
   }
-  
+
   Future<bool> getRequiresCharging() {
     throw UnimplementedError('getRequiresCharging() has not been implemented.');
   }
-  
+
   Future<bool> setDeviceIdle(bool enabled) {
     throw UnimplementedError(
         'setDeviceIdle(enabled: $enabled) has not been implemented.');
   }
-  
+
   Future<bool> getDeviceIdle() {
     throw UnimplementedError('getDeviceIdle() has not been implemented.');
   }

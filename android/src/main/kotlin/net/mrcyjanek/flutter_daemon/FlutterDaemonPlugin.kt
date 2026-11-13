@@ -1,485 +1,301 @@
 package net.mrcyjanek.flutter_daemon
 
+import android.app.ActivityManager
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.content.pm.ServiceInfo
+import android.net.Uri
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.os.PowerManager
+import android.provider.Settings
+import android.util.Log
+import android.widget.Toast
 import androidx.annotation.NonNull
+import androidx.core.app.NotificationCompat
+import androidx.work.Constraints
 import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.ForegroundInfo
+import androidx.work.ListenableWorker
+import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.Worker
 import androidx.work.WorkerParameters
 import io.flutter.embedding.engine.FlutterEngine
-import io.flutter.embedding.engine.plugins.FlutterPlugin
+import io.flutter.embedding.engine.FlutterEngineCache
 import io.flutter.embedding.engine.dart.DartExecutor
+import io.flutter.embedding.engine.loader.FlutterLoader
+import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler
 import io.flutter.plugin.common.MethodChannel.Result
-import io.flutter.embedding.engine.loader.FlutterLoader
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
-import androidx.work.Constraints
-import androidx.work.NetworkType
-import android.os.PowerManager
-import android.content.Intent
-import android.provider.Settings
-import android.net.Uri
-import android.os.Build
-import androidx.core.app.NotificationCompat
-import android.content.pm.ServiceInfo
-import android.util.Log
+import java.util.concurrent.atomic.AtomicBoolean
 
-class FlutterDaemonPlugin: FlutterPlugin, MethodCallHandler {
+private const val TAG = "flutter_daemon"
+private const val CHANNEL = "flutter_daemon"
+private const val ENGINE_CACHE_KEY = "background_engine"
+private const val PREFS = "flutter_daemon_prefs"
+private const val WORK_NAME = "BackgroundSyncWork"
+private const val KEY_INTERVAL = "background_sync_interval"
+private const val KEY_UNMETERED = "network_type_unmetered"
+private const val KEY_BATTERY = "battery_not_low"
+private const val KEY_CHARGING = "requires_charging"
+private const val KEY_IDLE = "device_idle"
+
+class FlutterDaemonPlugin : FlutterPlugin, MethodCallHandler {
   companion object {
     const val MINIMUM_INTERVAL_MINUTES = 15
+
+    private val callbackExecutor = Executors.newSingleThreadExecutor()
   }
 
-  private lateinit var channel : MethodChannel
+  private lateinit var channel: MethodChannel
   private lateinit var context: Context
+  private var generation = 0
 
   override fun onAttachedToEngine(@NonNull flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
     context = flutterPluginBinding.applicationContext
-    channel = MethodChannel(flutterPluginBinding.binaryMessenger, "flutter_daemon")
+    channel = MethodChannel(flutterPluginBinding.binaryMessenger, CHANNEL)
     channel.setMethodCallHandler(this)
   }
 
   override fun onMethodCall(@NonNull call: MethodCall, @NonNull result: Result) {
     when (call.method) {
-      "getCapabilities" -> {
-        result.success(mapOf(
-          "backgroundSync" to true,
-          "constraints" to true,
-          "batteryOptimization" to true,
-          "minimumIntervalMinutes" to MINIMUM_INTERVAL_MINUTES,
-        ))
-      }
-      "startBackgroundSync" -> {
-        try {
-          val intervalMinutes = call.argument<Int>("intervalMinutes")
-          if (intervalMinutes == null || intervalMinutes < MINIMUM_INTERVAL_MINUTES) {
-            result.error(
-              "BACKGROUND_SYNC_ERROR",
-              "intervalMinutes must be at least $MINIMUM_INTERVAL_MINUTES",
-              null,
-            )
-            return
-          }
-          val constraints = buildConstraintsFromPreferences()
-          val sharedPreferences = context.getSharedPreferences("flutter_daemon_prefs", Context.MODE_PRIVATE)
-          sharedPreferences.edit().putInt("background_sync_interval", intervalMinutes).apply()
-          
-          val syncWorkRequest = PeriodicWorkRequestBuilder<BackgroundSyncWorker>(intervalMinutes.toLong(), TimeUnit.MINUTES)
-              .setConstraints(constraints)
-              .build()
-
-          WorkManager.getInstance(context).enqueueUniquePeriodicWork(
-              "BackgroundSyncWork", 
-              ExistingPeriodicWorkPolicy.REPLACE,
-              syncWorkRequest
+      "getCapabilities" -> result.success(mapOf(
+        "backgroundSync" to true,
+        "constraints" to true,
+        "batteryOptimization" to true,
+        "minimumIntervalMinutes" to MINIMUM_INTERVAL_MINUTES,
+      ))
+      "startBackgroundSync" -> result.reply("BACKGROUND_SYNC_ERROR", "Failed to schedule background sync") {
+        val intervalMinutes = call.argument<Int>("intervalMinutes")
+        if (intervalMinutes == null || intervalMinutes < MINIMUM_INTERVAL_MINUTES) {
+          error(
+            "BACKGROUND_SYNC_ERROR",
+            "intervalMinutes must be at least $MINIMUM_INTERVAL_MINUTES",
+            null,
           )
-          result.success("Background sync scheduled every $intervalMinutes minutes.")
-        } catch (e: Exception) {
-          Log.e("flutter_daemon", "Failed to schedule background sync", e)
-          result.error("BACKGROUND_SYNC_ERROR", "Failed to schedule background sync", e.message)
+          return@reply
         }
+        prefs().edit().putInt(KEY_INTERVAL, intervalMinutes).apply()
+        val request = PeriodicWorkRequestBuilder<BackgroundSyncWorker>(
+          intervalMinutes.toLong(),
+          TimeUnit.MINUTES,
+        ).setConstraints(buildConstraintsFromPreferences()).build()
+        WorkManager.getInstance(context).enqueueUniquePeriodicWork(
+          WORK_NAME,
+          ExistingPeriodicWorkPolicy.REPLACE,
+          request,
+        )
+        success("Background sync scheduled every $intervalMinutes minutes.")
       }
-      "stopBackgroundSync" -> {
-        try {
-          WorkManager.getInstance(context).cancelUniqueWork("BackgroundSyncWork")
-          context.getSharedPreferences("flutter_daemon_prefs", Context.MODE_PRIVATE)
-            .edit()
-            .remove("background_sync_interval")
-            .apply()
-          result.success("Background sync stopped successfully.")
-        } catch (e: Exception) {
-          Log.e("flutter_daemon", "Failed to stop background sync", e)
-          result.error("BACKGROUND_SYNC_ERROR", "Failed to stop background sync", e.message)
+      "stopBackgroundSync" -> result.reply("BACKGROUND_SYNC_ERROR", "Failed to stop background sync") {
+        WorkManager.getInstance(context).cancelUniqueWork(WORK_NAME)
+        prefs().edit().remove(KEY_INTERVAL).apply()
+        success("Background sync stopped successfully.")
+      }
+      "getBackgroundSyncStatus" -> querySyncStatus(result)
+      "getBackgroundSyncInterval" -> result.reply("BACKGROUND_SYNC_ERROR", "Failed to get background sync interval") {
+        val intervalMinutes = prefs().getInt(KEY_INTERVAL, -1)
+        success(if (intervalMinutes == -1) null else intervalMinutes)
+      }
+      "isBatteryOptimizationDisabled" -> result.reply("BATTERY_OPT_ERROR", "Failed to check battery optimization status") {
+        success(ignoresBatteryOptimizations())
+      }
+      "requestDisableBatteryOptimization" -> result.reply("BATTERY_OPT_ERROR", "Failed to request disable battery optimization") {
+        requestDisableBatteryOptimization()
+      }
+      "openBatteryOptimizationSettings" -> result.reply("BATTERY_OPT_ERROR", "Failed to open battery optimization settings") {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+          success(false)
+          return@reply
         }
+        startSettings(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+        success(true)
       }
-      "getBackgroundSyncStatus" -> {
-        try {
-          // Use a ListenableFuture instead of LiveData to avoid multiple callbacks
-          // that cause crashes when multiple result.success() are called.
-          val workInfosFuture = WorkManager.getInstance(context)
-            .getWorkInfosForUniqueWork("BackgroundSyncWork")
-          
-          workInfosFuture.addListener({
-            try {
-              val workInfos = workInfosFuture.get()
-              
-              if (workInfos == null || workInfos.isEmpty()) {
-                result.success(false)
-                return@addListener
-              }
-              
-              val isScheduled = workInfos.any { workInfo -> 
-                workInfo.state == androidx.work.WorkInfo.State.ENQUEUED || 
-                workInfo.state == androidx.work.WorkInfo.State.RUNNING 
-              }
-              
-              result.success(isScheduled)
-            } catch (e: Exception) {
-              result.error("BACKGROUND_SYNC_ERROR", "Failed to process work info", e.message)
-            }
-          }, java.util.concurrent.Executors.newSingleThreadExecutor())
-        } catch (e: Exception) {
-          result.error("BACKGROUND_SYNC_ERROR", "Failed to get background sync status", e.message)
-        }
-      }
-      "getBackgroundSyncInterval" -> {
-        try {
-          val sharedPreferences = context.getSharedPreferences("flutter_daemon_prefs", Context.MODE_PRIVATE)
-          val intervalMinutes = sharedPreferences.getInt("background_sync_interval", -1)
-          
-          if (intervalMinutes == -1) {
-            result.success(null)
-          } else {
-            result.success(intervalMinutes)
-          }
-        } catch (e: Exception) {
-          result.error("BACKGROUND_SYNC_ERROR", "Failed to get background sync interval", e.message)
-        }
-      }
-      "isBatteryOptimizationDisabled" -> {
-        try {
-          val isDisabled = isBatteryOptimizationDisabled()
-          result.success(isDisabled)
-        } catch (e: Exception) {
-          result.error("BATTERY_OPT_ERROR", "Failed to check battery optimization status", e.message)
-        }
-      }
-      "requestDisableBatteryOptimization" -> {
-        try {
-          if (isBatteryOptimizationDisabled()) {
-            result.success(true)
-            return
-          }
-          
-          val hasPermission = context.packageManager.checkPermission(
-            android.Manifest.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
-            context.packageName
-          ) == android.content.pm.PackageManager.PERMISSION_GRANTED
-          
-          if (!hasPermission) {
-            val appName = try {
-              val appInfo = context.packageManager.getApplicationInfo(context.packageName, 0)
-              context.packageManager.getApplicationLabel(appInfo).toString()
-            } catch (e: Exception) {
-              context.packageName
-            }
-            
-            android.widget.Toast.makeText(
-              context,
-              "Please find '$appName' in battery settings and select 'Unrestricted'",
-              android.widget.Toast.LENGTH_LONG
-            ).show()
-            
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-              val intent = Intent().apply {
-                action = Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK
-              }
-              context.startActivity(intent)
-            }
-            
-            result.success(false)
-            return
-          }
-          
-          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            val intent = Intent().apply {
-              action = Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS
-              data = Uri.parse("package:${context.packageName}")
-              flags = Intent.FLAG_ACTIVITY_NEW_TASK
-            }
-            context.startActivity(intent)
-            result.success(true)
-          } else {
-            result.success(false)
-          }
-        } catch (e: Exception) {
-          result.error("BATTERY_OPT_ERROR", "Failed to request disable battery optimization", e.message)
-        }
-      }
-      "openBatteryOptimizationSettings" -> {
-        try {
-          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            val intent = Intent().apply {
-              action = Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS
-              flags = Intent.FLAG_ACTIVITY_NEW_TASK
-            }
-            context.startActivity(intent)
-            result.success(true)
-          } else {
-            result.success(false)
-          }
-        } catch (e: Exception) {
-          result.error("BATTERY_OPT_ERROR", "Failed to open battery optimization settings", e.message)
-        }
-      }
-      "setNetworkType" -> {
-        try {
-          val useUnmetered = call.argument<Boolean>("useUnmetered") ?: false
-          setNetworkTypePreference(useUnmetered)
-          result.success(true)
-        } catch (e: Exception) {
-          result.error("CONSTRAINT_ERROR", "Failed to set network type", e.message)
-        }
-      }
-      "getNetworkType" -> {
-        try {
-          val useUnmetered = getNetworkTypePreference()
-          result.success(useUnmetered)
-        } catch (e: Exception) {
-          result.error("CONSTRAINT_ERROR", "Failed to get network type", e.message)
-        }
-      }
-      "setBatteryNotLow" -> {
-        try {
-          val enabled = call.argument<Boolean>("enabled") ?: false
-          setBatteryNotLowPreference(enabled)
-          result.success(true)
-        } catch (e: Exception) {
-          result.error("CONSTRAINT_ERROR", "Failed to set battery constraint", e.message)
-        }
-      }
-      "getBatteryNotLow" -> {
-        try {
-          val enabled = getBatteryNotLowPreference()
-          result.success(enabled)
-        } catch (e: Exception) {
-          result.error("CONSTRAINT_ERROR", "Failed to get battery constraint", e.message)
-        }
-      }
-      "setRequiresCharging" -> {
-        try {
-          val enabled = call.argument<Boolean>("enabled") ?: false
-          setRequiresChargingPreference(enabled)
-          result.success(true)
-        } catch (e: Exception) {
-          result.error("CONSTRAINT_ERROR", "Failed to set charging constraint", e.message)
-        }
-      }
-      "getRequiresCharging" -> {
-        try {
-          val enabled = getRequiresChargingPreference()
-          result.success(enabled)
-        } catch (e: Exception) {
-          result.error("CONSTRAINT_ERROR", "Failed to get charging constraint", e.message)
-        }
-      }
-      "setDeviceIdle" -> {
-        try {
-          val enabled = call.argument<Boolean>("enabled") ?: false
-          setDeviceIdlePreference(enabled)
-          result.success(true)
-        } catch (e: Exception) {
-          result.error("CONSTRAINT_ERROR", "Failed to set device idle constraint", e.message)
-        }
-      }
-      "getDeviceIdle" -> {
-        try {
-          val enabled = getDeviceIdlePreference()
-          result.success(enabled)
-        } catch (e: Exception) {
-          result.error("CONSTRAINT_ERROR", "Failed to get device idle constraint", e.message)
-        }
-      }
-      else -> {
-        result.notImplemented()
-      }
+      "setNetworkType" -> result.writeFlag(KEY_UNMETERED, call.argument<Boolean>("useUnmetered") ?: false, "Failed to set network type")
+      "getNetworkType" -> result.readFlag(KEY_UNMETERED, "Failed to get network type")
+      "setBatteryNotLow" -> result.writeFlag(KEY_BATTERY, call.argument<Boolean>("enabled") ?: false, "Failed to set battery constraint")
+      "getBatteryNotLow" -> result.readFlag(KEY_BATTERY, "Failed to get battery constraint")
+      "setRequiresCharging" -> result.writeFlag(KEY_CHARGING, call.argument<Boolean>("enabled") ?: false, "Failed to set charging constraint")
+      "getRequiresCharging" -> result.readFlag(KEY_CHARGING, "Failed to get charging constraint")
+      "setDeviceIdle" -> result.writeFlag(KEY_IDLE, call.argument<Boolean>("enabled") ?: false, "Failed to set device idle constraint")
+      "getDeviceIdle" -> result.readFlag(KEY_IDLE, "Failed to get device idle constraint")
+      else -> result.notImplemented()
     }
   }
 
   override fun onDetachedFromEngine(@NonNull binding: FlutterPlugin.FlutterPluginBinding) {
+    generation += 1
     channel.setMethodCallHandler(null)
   }
 
-  private fun isBatteryOptimizationDisabled(): Boolean {
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-      val powerManager = context.getSystemService(Context.POWER_SERVICE) as PowerManager
-      return powerManager.isIgnoringBatteryOptimizations(context.packageName)
+  private fun querySyncStatus(result: Result) {
+    val generationAtCall = generation
+    try {
+      val future = WorkManager.getInstance(context).getWorkInfosForUniqueWork(WORK_NAME)
+      future.addListener({
+        if (generationAtCall != generation) return@addListener
+        try {
+          val scheduled = future.get()?.any { workInfo ->
+            workInfo.state == WorkInfo.State.ENQUEUED || workInfo.state == WorkInfo.State.RUNNING
+          } == true
+          result.success(scheduled)
+        } catch (e: Exception) {
+          Log.e(TAG, "Failed to process work info", e)
+          result.error("BACKGROUND_SYNC_ERROR", "Failed to process work info", e.message)
+        }
+      }, callbackExecutor)
+    } catch (e: Exception) {
+      Log.e(TAG, "Failed to get background sync status", e)
+      result.error("BACKGROUND_SYNC_ERROR", "Failed to get background sync status", e.message)
     }
-    // Before Android M, there was no battery optimization system like this
-    return true
   }
 
-  private fun getSharedPreferences(): android.content.SharedPreferences {
-    return context.getSharedPreferences("flutter_daemon_prefs", Context.MODE_PRIVATE)
+  private fun Result.requestDisableBatteryOptimization() {
+    if (ignoresBatteryOptimizations()) {
+      success(true)
+      return
+    }
+    val granted = context.packageManager.checkPermission(
+      android.Manifest.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+      context.packageName,
+    ) == PackageManager.PERMISSION_GRANTED
+    if (!granted) {
+      Toast.makeText(
+        context,
+        "Please find '${applicationLabel()}' in battery settings and select 'Unrestricted'",
+        Toast.LENGTH_LONG,
+      ).show()
+      startSettings(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+      success(false)
+      return
+    }
+    startSettings(
+      Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+      Uri.parse("package:${context.packageName}"),
+    )
+    success(true)
   }
-  
-  private fun setNetworkTypePreference(useUnmetered: Boolean) {
-    getSharedPreferences().edit().putBoolean("network_type_unmetered", useUnmetered).apply()
+
+  private fun ignoresBatteryOptimizations(): Boolean {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return true
+    val powerManager = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+    return powerManager.isIgnoringBatteryOptimizations(context.packageName)
   }
-  
-  private fun getNetworkTypePreference(): Boolean {
-    return getSharedPreferences().getBoolean("network_type_unmetered", false)
+
+  private fun applicationLabel(): String {
+    return try {
+      val info = context.packageManager.getApplicationInfo(context.packageName, 0)
+      context.packageManager.getApplicationLabel(info).toString()
+    } catch (e: Exception) {
+      context.packageName
+    }
   }
-  
-  private fun setBatteryNotLowPreference(enabled: Boolean) {
-    getSharedPreferences().edit().putBoolean("battery_not_low", enabled).apply()
+
+  private fun startSettings(action: String, data: Uri? = null) {
+    context.startActivity(Intent(action).apply {
+      this.data = data
+      flags = Intent.FLAG_ACTIVITY_NEW_TASK
+    })
   }
-  
-  private fun getBatteryNotLowPreference(): Boolean {
-    return getSharedPreferences().getBoolean("battery_not_low", false)
+
+  private fun prefs() = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
+  private fun Result.readFlag(key: String, failure: String) {
+    reply("CONSTRAINT_ERROR", failure) {
+      success(prefs().getBoolean(key, false))
+    }
   }
-  
-  private fun setRequiresChargingPreference(enabled: Boolean) {
-    getSharedPreferences().edit().putBoolean("requires_charging", enabled).apply()
+
+  private fun Result.writeFlag(key: String, value: Boolean, failure: String) {
+    reply("CONSTRAINT_ERROR", failure) {
+      prefs().edit().putBoolean(key, value).apply()
+      success(true)
+    }
   }
-  
-  private fun getRequiresChargingPreference(): Boolean {
-    return getSharedPreferences().getBoolean("requires_charging", false)
-  }
-  
-  private fun setDeviceIdlePreference(enabled: Boolean) {
-    getSharedPreferences().edit().putBoolean("device_idle", enabled).apply()
-  }
-  
-  private fun getDeviceIdlePreference(): Boolean {
-    return getSharedPreferences().getBoolean("device_idle", false)
-  }
-  
+
   private fun buildConstraintsFromPreferences(): Constraints {
-    val constraintsBuilder = Constraints.Builder()
-    if (getNetworkTypePreference()) {
-      constraintsBuilder.setRequiredNetworkType(NetworkType.UNMETERED)
-    } else {
-      constraintsBuilder.setRequiredNetworkType(NetworkType.CONNECTED)
-    }
-    if (getBatteryNotLowPreference()) {
-      constraintsBuilder.setRequiresBatteryNotLow(true)
-    }
-    
-    if (getRequiresChargingPreference()) {
-      constraintsBuilder.setRequiresCharging(true)
-    }
-    
-    if (getDeviceIdlePreference()) {
-      constraintsBuilder.setRequiresDeviceIdle(true)
-    }
-    
-    return constraintsBuilder.build()
+    val stored = prefs()
+    return Constraints.Builder().apply {
+      setRequiredNetworkType(
+        if (stored.getBoolean(KEY_UNMETERED, false)) NetworkType.UNMETERED else NetworkType.CONNECTED,
+      )
+      if (stored.getBoolean(KEY_BATTERY, false)) setRequiresBatteryNotLow(true)
+      if (stored.getBoolean(KEY_CHARGING, false)) setRequiresCharging(true)
+      if (stored.getBoolean(KEY_IDLE, false)) setRequiresDeviceIdle(true)
+    }.build()
   }
 }
 
-class BackgroundSyncWorker(appContext: Context, workerParams: WorkerParameters) : Worker(appContext, workerParams) {
+private inline fun Result.reply(code: String, failure: String, block: Result.() -> Unit) {
+  try {
+    block()
+  } catch (e: Exception) {
+    Log.e(TAG, failure, e)
+    error(code, failure, e.message)
+  }
+}
+
+class BackgroundSyncWorker(
+  appContext: Context,
+  workerParams: WorkerParameters,
+) : Worker(appContext, workerParams) {
   companion object {
-    private val isRunning = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val isRunning = AtomicBoolean(false)
     private const val NOTIFICATION_ID = 1337
     private const val CHANNEL_ID = "flutter_daemon_sync"
   }
 
-  override fun doWork(): androidx.work.ListenableWorker.Result {
+  override fun doWork(): ListenableWorker.Result {
     if (isAppInForeground()) {
-      Log.i("flutter_daemon", "App is in the foreground, skipping background sync")
-      return androidx.work.ListenableWorker.Result.success()
+      Log.i(TAG, "App is in the foreground, skipping background sync")
+      return ListenableWorker.Result.success()
     }
     if (!isRunning.compareAndSet(false, true)) {
-      Log.i("flutter_daemon", "Background sync is already running")
-      return androidx.work.ListenableWorker.Result.success()
+      Log.i(TAG, "Background sync is already running")
+      return ListenableWorker.Result.success()
     }
 
-    val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
-    val released = java.util.concurrent.atomic.AtomicBoolean(false)
+    val mainHandler = Handler(Looper.getMainLooper())
+    val released = AtomicBoolean(false)
     try {
       createNotificationChannel()
-      val notification = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
-          .setContentTitle("Background Sync")
-          .setContentText("Keeping sync active...")
-          .setSmallIcon(android.R.drawable.ic_popup_sync)
-          .setPriority(NotificationCompat.PRIORITY_LOW)
-          .setOngoing(true)
-          .setSilent(true)
-          .build()
-      setForegroundAsync(androidx.work.ForegroundInfo(
-          NOTIFICATION_ID,
-          notification,
-          ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-      ))
+      setForegroundAsync(ForegroundInfo(NOTIFICATION_ID, buildNotification(), foregroundServiceType()))
 
-      val latch = java.util.concurrent.CountDownLatch(1)
-      var result: androidx.work.ListenableWorker.Result = androidx.work.ListenableWorker.Result.success()
-
-      mainHandler.post {
-        var flutterEngine: FlutterEngine? = null
-        var cached = false
-        try {
-          if (released.get()) {
-            return@post
-          }
-          val engine = FlutterEngine(applicationContext)
-          flutterEngine = engine
-          val flutterLoader = FlutterLoader()
-          flutterLoader.startInitialization(applicationContext)
-          flutterLoader.ensureInitializationComplete(applicationContext, null)
-          val appBundlePath = flutterLoader.findAppBundlePath()
-          if (appBundlePath != null) {
-            engine.dartExecutor.executeDartEntrypoint(
-                DartExecutor.DartEntrypoint(appBundlePath, "backgroundSync")
-            )
-            if (released.get()) {
-              engine.destroy()
-            } else {
-              io.flutter.embedding.engine.FlutterEngineCache.getInstance()
-                .put("background_engine", engine)
-              cached = true
-            }
-          } else {
-            Log.e("flutter_daemon", "App bundle path was not found")
-            engine.destroy()
-            result = androidx.work.ListenableWorker.Result.failure()
-          }
-        } catch (e: Exception) {
-          Log.e("flutter_daemon", "Failed to start the background engine", e)
-          if (!cached) {
-            flutterEngine?.destroy()
-          }
-          result = androidx.work.ListenableWorker.Result.failure()
-        } finally {
-          latch.countDown()
-        }
-      }
+      val latch = CountDownLatch(1)
+      var result = ListenableWorker.Result.success()
+      mainHandler.post { startEngine(released, latch) { result = it } }
 
       if (!latch.await(30, TimeUnit.SECONDS)) {
-        Log.e("flutter_daemon", "Timed out starting the background engine")
-        return androidx.work.ListenableWorker.Result.failure()
+        Log.e(TAG, "Timed out starting the background engine")
+        return ListenableWorker.Result.failure()
       }
 
-      val mainThreadLatch = java.util.concurrent.CountDownLatch(1)
-      mainHandler.post {
-        try {
-          val flutterEngine = io.flutter.embedding.engine.FlutterEngineCache.getInstance().get("background_engine")
-          if (flutterEngine != null) {
-            val methodChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "flutter_daemon")
-            methodChannel.setMethodCallHandler { call, callResult ->
-              if (call.method == "backgroundSyncComplete") {
-                callResult.success(true)
-                mainThreadLatch.countDown()
-              } else {
-                callResult.notImplemented()
-              }
-            }
-          } else {
-            Log.e("flutter_daemon", "Background engine was not cached")
-            mainThreadLatch.countDown()
-          }
-        } catch (e: Exception) {
-          Log.e("flutter_daemon", "Failed to listen for backgroundSyncComplete", e)
-          mainThreadLatch.countDown()
-        }
-      }
-
+      val mainThreadLatch = CountDownLatch(1)
+      mainHandler.post { listenForCompletion(mainThreadLatch) }
       if (!mainThreadLatch.await(10, TimeUnit.MINUTES)) {
-        Log.e("flutter_daemon", "Timed out waiting for backgroundSyncComplete")
-        result = androidx.work.ListenableWorker.Result.failure()
+        Log.e(TAG, "Timed out waiting for backgroundSyncComplete")
+        result = ListenableWorker.Result.failure()
       }
       return result
     } finally {
       released.set(true)
-      val destroyLatch = java.util.concurrent.CountDownLatch(1)
+      val destroyLatch = CountDownLatch(1)
       mainHandler.post {
-        val cache = io.flutter.embedding.engine.FlutterEngineCache.getInstance()
-        val engine = cache.get("background_engine")
-        cache.remove("background_engine")
+        val cache = FlutterEngineCache.getInstance()
+        val engine = cache.get(ENGINE_CACHE_KEY)
+        cache.remove(ENGINE_CACHE_KEY)
         engine?.destroy()
         destroyLatch.countDown()
       }
@@ -487,36 +303,110 @@ class BackgroundSyncWorker(appContext: Context, workerParams: WorkerParameters) 
       isRunning.set(false)
     }
   }
-  
-  private fun isAppInForeground(): Boolean {
-    val activityManager = applicationContext.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
-    val appProcesses = activityManager.runningAppProcesses ?: return false
-    val packageName = applicationContext.packageName
-    
-    for (appProcess in appProcesses) {
-      if (appProcess.importance == android.app.ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND 
-          && appProcess.processName == packageName) {
-        return true
+
+  private fun startEngine(
+    released: AtomicBoolean,
+    latch: CountDownLatch,
+    setResult: (ListenableWorker.Result) -> Unit,
+  ) {
+    var flutterEngine: FlutterEngine? = null
+    var cached = false
+    try {
+      if (released.get()) return
+      val engine = FlutterEngine(applicationContext)
+      flutterEngine = engine
+      val flutterLoader = FlutterLoader()
+      flutterLoader.startInitialization(applicationContext)
+      flutterLoader.ensureInitializationComplete(applicationContext, null)
+      val appBundlePath = flutterLoader.findAppBundlePath()
+      if (appBundlePath == null) {
+        Log.e(TAG, "App bundle path was not found")
+        engine.destroy()
+        setResult(ListenableWorker.Result.failure())
+        return
       }
+      engine.dartExecutor.executeDartEntrypoint(
+        DartExecutor.DartEntrypoint(appBundlePath, "backgroundSync"),
+      )
+      if (released.get()) {
+        engine.destroy()
+      } else {
+        FlutterEngineCache.getInstance().put(ENGINE_CACHE_KEY, engine)
+        cached = true
+      }
+    } catch (e: Exception) {
+      Log.e(TAG, "Failed to start the background engine", e)
+      if (!cached) flutterEngine?.destroy()
+      setResult(ListenableWorker.Result.failure())
+    } finally {
+      latch.countDown()
     }
-    return false
+  }
+
+  private fun listenForCompletion(latch: CountDownLatch) {
+    try {
+      val engine = FlutterEngineCache.getInstance().get(ENGINE_CACHE_KEY)
+      if (engine == null) {
+        Log.e(TAG, "Background engine was not cached")
+        latch.countDown()
+        return
+      }
+      val methodChannel = MethodChannel(engine.dartExecutor.binaryMessenger, CHANNEL)
+      methodChannel.setMethodCallHandler { call, callResult ->
+        if (call.method == "backgroundSyncComplete") {
+          callResult.success(null)
+          latch.countDown()
+        } else {
+          callResult.notImplemented()
+        }
+      }
+    } catch (e: Exception) {
+      Log.e(TAG, "Failed to listen for backgroundSyncComplete", e)
+      latch.countDown()
+    }
+  }
+
+  private fun foregroundServiceType(): Int {
+    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+      ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+    } else {
+      0
+    }
+  }
+
+  private fun buildNotification() = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
+    .setContentTitle("Background Sync")
+    .setContentText("Keeping sync active...")
+    .setSmallIcon(android.R.drawable.ic_popup_sync)
+    .setPriority(NotificationCompat.PRIORITY_LOW)
+    .setOngoing(true)
+    .setSilent(true)
+    .build()
+
+  private fun isAppInForeground(): Boolean {
+    val activityManager = applicationContext.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+    val packageName = applicationContext.packageName
+    return activityManager.runningAppProcesses?.any { process ->
+      process.importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND &&
+        process.processName == packageName
+    } == true
   }
 
   private fun createNotificationChannel() {
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-      val name = "Flutter Daemon"
-      val descriptionText = "Background sync notifications"
-      val importance = android.app.NotificationManager.IMPORTANCE_LOW
-      val channel = android.app.NotificationChannel(CHANNEL_ID, name, importance).apply {
-        description = descriptionText
-        setShowBadge(false)
-        enableLights(false)
-        enableVibration(false)
-        setSound(null, null)
-      }
-      
-      val notificationManager = applicationContext.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
-      notificationManager.createNotificationChannel(channel)
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+    val channel = NotificationChannel(
+      CHANNEL_ID,
+      "Flutter Daemon",
+      NotificationManager.IMPORTANCE_LOW,
+    ).apply {
+      description = "Background sync notifications"
+      setShowBadge(false)
+      enableLights(false)
+      enableVibration(false)
+      setSound(null, null)
     }
+    val notificationManager =
+      applicationContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+    notificationManager.createNotificationChannel(channel)
   }
 }

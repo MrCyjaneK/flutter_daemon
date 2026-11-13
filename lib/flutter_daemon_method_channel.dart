@@ -7,6 +7,20 @@ class MethodChannelFlutterDaemon extends FlutterDaemonPlatform {
   @visibleForTesting
   final methodChannel = const MethodChannel('flutter_daemon');
 
+  Future<String> _invokeString(
+    String method, {
+    Object? arguments,
+    required String fallback,
+  }) async {
+    final result = await methodChannel.invokeMethod<String>(method, arguments);
+    return result ?? fallback;
+  }
+
+  Future<bool> _invokeBool(String method, [Object? arguments]) async {
+    final result = await methodChannel.invokeMethod<bool>(method, arguments);
+    return result ?? false;
+  }
+
   @override
   Future<FlutterDaemonCapabilities> getCapabilities() async {
     final result = await methodChannel
@@ -15,113 +29,89 @@ class MethodChannelFlutterDaemon extends FlutterDaemonPlatform {
   }
 
   @override
-  Future<String> startBackgroundSync(int intervalMinutes) async {
-    final result = await methodChannel.invokeMethod<String>(
+  Future<String> startBackgroundSync(int intervalMinutes) {
+    return _invokeString(
       'startBackgroundSync',
-      {'intervalMinutes': intervalMinutes},
+      arguments: {'intervalMinutes': intervalMinutes},
+      fallback: 'Failed to start background sync',
     );
-    return result ?? 'Failed to start background sync';
   }
 
   @override
-  Future<String> stopBackgroundSync() async {
-    final result =
-        await methodChannel.invokeMethod<String>('stopBackgroundSync');
-    return result ?? 'Failed to stop background sync';
-  }
-
-  @override
-  Future<bool> getBackgroundSyncStatus() async {
-    final result =
-        await methodChannel.invokeMethod<bool>('getBackgroundSyncStatus');
-    return result ?? false;
-  }
-
-  @override
-  Future<int?> getBackgroundSyncInterval() async {
-    final result =
-        await methodChannel.invokeMethod<int?>('getBackgroundSyncInterval');
-    return result;
-  }
-
-  @override
-  Future<bool> isBatteryOptimizationDisabled() async {
-    final result =
-        await methodChannel.invokeMethod<bool>('isBatteryOptimizationDisabled');
-    return result ?? false;
-  }
-
-  @override
-  Future<bool> requestDisableBatteryOptimization() async {
-    final result =
-        await methodChannel.invokeMethod<bool>('requestDisableBatteryOptimization');
-    return result ?? false;
-  }
-
-  @override
-  Future<bool> openBatteryOptimizationSettings() async {
-    final result =
-        await methodChannel.invokeMethod<bool>('openBatteryOptimizationSettings');
-    return result ?? false;
-  }
-
-  @override
-  Future<bool> setNetworkType(bool useUnmetered) async {
-    final result = await methodChannel.invokeMethod<bool>(
-      'setNetworkType',
-      {'useUnmetered': useUnmetered},
+  Future<String> stopBackgroundSync() {
+    return _invokeString(
+      'stopBackgroundSync',
+      fallback: 'Failed to stop background sync',
     );
-    return result ?? false;
   }
-  
+
   @override
-  Future<bool> getNetworkType() async {
-    final result = await methodChannel.invokeMethod<bool>('getNetworkType');
-    return result ?? false;
+  Future<bool> getBackgroundSyncStatus() {
+    return _invokeBool('getBackgroundSyncStatus');
   }
-  
+
   @override
-  Future<bool> setBatteryNotLow(bool enabled) async {
-    final result = await methodChannel.invokeMethod<bool>(
-      'setBatteryNotLow',
-      {'enabled': enabled},
-    );
-    return result ?? false;
+  Future<int?> getBackgroundSyncInterval() {
+    return methodChannel.invokeMethod<int>('getBackgroundSyncInterval');
   }
-  
+
   @override
-  Future<bool> getBatteryNotLow() async {
-    final result = await methodChannel.invokeMethod<bool>('getBatteryNotLow');
-    return result ?? false;
+  Future<void> signalBackgroundSyncComplete() {
+    return methodChannel.invokeMethod<void>('backgroundSyncComplete');
   }
-  
+
   @override
-  Future<bool> setRequiresCharging(bool enabled) async {
-    final result = await methodChannel.invokeMethod<bool>(
-      'setRequiresCharging',
-      {'enabled': enabled},
-    );
-    return result ?? false;
+  Future<bool> isBatteryOptimizationDisabled() {
+    return _invokeBool('isBatteryOptimizationDisabled');
   }
-  
+
   @override
-  Future<bool> getRequiresCharging() async {
-    final result = await methodChannel.invokeMethod<bool>('getRequiresCharging');
-    return result ?? false;
+  Future<bool> requestDisableBatteryOptimization() {
+    return _invokeBool('requestDisableBatteryOptimization');
   }
-  
+
   @override
-  Future<bool> setDeviceIdle(bool enabled) async {
-    final result = await methodChannel.invokeMethod<bool>(
-      'setDeviceIdle',
-      {'enabled': enabled},
-    );
-    return result ?? false;
+  Future<bool> openBatteryOptimizationSettings() {
+    return _invokeBool('openBatteryOptimizationSettings');
   }
-  
+
   @override
-  Future<bool> getDeviceIdle() async {
-    final result = await methodChannel.invokeMethod<bool>('getDeviceIdle');
-    return result ?? false;
+  Future<bool> setNetworkType(bool useUnmetered) {
+    return _invokeBool('setNetworkType', {'useUnmetered': useUnmetered});
+  }
+
+  @override
+  Future<bool> getNetworkType() {
+    return _invokeBool('getNetworkType');
+  }
+
+  @override
+  Future<bool> setBatteryNotLow(bool enabled) {
+    return _invokeBool('setBatteryNotLow', {'enabled': enabled});
+  }
+
+  @override
+  Future<bool> getBatteryNotLow() {
+    return _invokeBool('getBatteryNotLow');
+  }
+
+  @override
+  Future<bool> setRequiresCharging(bool enabled) {
+    return _invokeBool('setRequiresCharging', {'enabled': enabled});
+  }
+
+  @override
+  Future<bool> getRequiresCharging() {
+    return _invokeBool('getRequiresCharging');
+  }
+
+  @override
+  Future<bool> setDeviceIdle(bool enabled) {
+    return _invokeBool('setDeviceIdle', {'enabled': enabled});
+  }
+
+  @override
+  Future<bool> getDeviceIdle() {
+    return _invokeBool('getDeviceIdle');
   }
 }

@@ -1,14 +1,14 @@
-import 'dart:async';
-import 'dart:convert';
-import 'dart:io' as io;
-import 'dart:isolate';
-import 'package:flutter/services.dart';
-import 'package:path/path.dart' as p;
+import 'package:flutter/foundation.dart';
+
 import 'flutter_daemon_platform_interface.dart';
+import 'src/background_sync_lock.dart';
+
 export 'flutter_daemon_platform_interface.dart' show FlutterDaemonCapabilities;
 
 class FlutterDaemon {
-  static const MethodChannel _channel = MethodChannel('flutter_daemon');
+  final BackgroundSyncLock _lock = BackgroundSyncLock(
+    signalComplete: _signalBackgroundSyncComplete,
+  );
 
   Future<FlutterDaemonCapabilities> getCapabilities() {
     return FlutterDaemonPlatform.instance.getCapabilities();
@@ -30,6 +30,25 @@ class FlutterDaemon {
     return FlutterDaemonPlatform.instance.getBackgroundSyncInterval();
   }
 
+  /// Tells the platform worker that this background entrypoint is finished.
+  ///
+  /// Does not release the sync lock. Call this when [markBackgroundSync]
+  /// reports that another live sync already owns the lock, so this worker
+  /// can stop waiting without cancelling that other sync.
+  Future<void> signalBackgroundSyncComplete() {
+    return _signalBackgroundSyncComplete();
+  }
+
+  Future<bool> unmarkBackgroundSync() async {
+    await _lock.release();
+    return true;
+  }
+
+  /// Returns true when another live sync already owns the lock.
+  Future<bool> markBackgroundSync() {
+    return _lock.mark();
+  }
+
   Future<bool> isBatteryOptimizationDisabled() {
     return FlutterDaemonPlatform.instance.isBatteryOptimizationDisabled();
   }
@@ -40,105 +59,6 @@ class FlutterDaemon {
 
   Future<bool> openBatteryOptimizationSettings() {
     return FlutterDaemonPlatform.instance.openBatteryOptimizationSettings();
-  }
-
-  final String path = p.join(io.Directory.systemTemp.path,
-      "flutter_daemon_background", "__daemonfile");
-
-  final String pidFilePath = p.join(io.Directory.systemTemp.path,
-      "flutter_daemon_background", "__daemonfile.pid");
-
-  /// Tells the Android worker that this background entrypoint is finished.
-  ///
-  /// Does not release the sync lock. Call this when [markBackgroundSync]
-  /// reports that another live sync already owns the lock, so this worker
-  /// can stop waiting without cancelling that other sync.
-  Future<void> signalBackgroundSyncComplete() async {
-    try {
-      await _channel.invokeMethod<void>('backgroundSyncComplete');
-    } catch (e) {
-      print("Failed to signal backgroundSyncComplete: $e");
-    }
-  }
-
-  Future<bool> unmarkBackgroundSync() async {
-    _deleteSyncFiles();
-    await signalBackgroundSyncComplete();
-    return true;
-  }
-
-  Future<bool> markBackgroundSync() async {
-    print("Marking background sync");
-
-    // The worker installs its completion handler just after launching this
-    // entrypoint. Wait until that handler is in place before deciding.
-    await Future.delayed(const Duration(seconds: 1));
-
-    final directory = io.Directory(p.dirname(path));
-    if (!directory.existsSync()) {
-      directory.createSync(recursive: true);
-    }
-
-    if (_syncLockIsLive()) {
-      print("Daemon already running");
-      return true;
-    }
-
-    _deleteSyncFiles();
-    final statFile = io.File(path);
-    statFile.writeAsStringSync(DateTime.now().toIso8601String());
-    io.File(pidFilePath).writeAsStringSync('${io.pid}');
-    _startHeartbeat(statFile.path);
-    return false;
-  }
-
-  bool _syncLockIsLive() {
-    final statFile = io.File(path);
-    final pidFile = io.File(pidFilePath);
-    if (!statFile.existsSync() || !pidFile.existsSync()) return false;
-    try {
-      final pid = int.tryParse(pidFile.readAsStringSync().trim());
-      if (pid == null || !_isPidAlive(pid)) return false;
-      final lastTimestamp = DateTime.parse(statFile.readAsStringSync().trim());
-      return DateTime.now().difference(lastTimestamp).inMinutes < 5;
-    } catch (e) {
-      print("Error reading background sync lock: $e");
-      return false;
-    }
-  }
-
-  bool _isPidAlive(int pid) {
-    if (pid <= 0) return false;
-    if (pid == io.pid) return true;
-    return io.Directory('/proc/$pid').existsSync();
-  }
-
-  void _deleteSyncFiles() {
-    final statFile = io.File(path);
-    final pidFile = io.File(pidFilePath);
-    if (statFile.existsSync()) statFile.deleteSync();
-    if (pidFile.existsSync()) pidFile.deleteSync();
-  }
-
-  void _startHeartbeat(String statPath) {
-    unawaited(Isolate.run(() async {
-      final file = io.File(statPath);
-      final handle = file.openSync(mode: io.FileMode.writeOnly);
-      try {
-        while (file.existsSync()) {
-          final bytes = utf8.encode(DateTime.now().toIso8601String());
-          handle.setPositionSync(0);
-          handle.writeFromSync(bytes);
-          handle.truncateSync(bytes.length);
-          handle.flushSync();
-          await Future.delayed(const Duration(seconds: 1));
-        }
-      } catch (e) {
-        print("Heartbeat stopped: $e");
-      } finally {
-        handle.closeSync();
-      }
-    }));
   }
 
   Future<bool> setNetworkType(bool useUnmetered) {
@@ -171,5 +91,15 @@ class FlutterDaemon {
 
   Future<bool> getDeviceIdle() {
     return FlutterDaemonPlatform.instance.getDeviceIdle();
+  }
+}
+
+Future<void> _signalBackgroundSyncComplete() async {
+  try {
+    await FlutterDaemonPlatform.instance.signalBackgroundSyncComplete();
+  } catch (e) {
+    if (kDebugMode) {
+      debugPrint('flutter_daemon: failed to signal backgroundSyncComplete: $e');
+    }
   }
 }

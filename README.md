@@ -10,117 +10,58 @@
 - Configure the sync interval in minutes
 
 
-# Installation
+## Installation
 
 ```bash
 $ dart pub add flutter_daemon --git-url=https://github.com/MrCyjaneK/flutter_daemon
 ```
 
-# Usage
+## Usage
 
 ```dart
-Future<String> startBackgroundSync(int intervalMinutes) {
-    return FlutterDaemon().startBackgroundSync(intervalMinutes);
-}
+final daemon = FlutterDaemon();
 
-Future<String> stopBackgroundSync() {
-    return FlutterDaemon().stopBackgroundSync();
-}
-
-Future<bool> getBackgroundSyncStatus() {
-    return FlutterDaemon().getBackgroundSyncStatus();
-}
-
-Future<int?> getBackgroundSyncInterval() {
-    return FlutterDaemon().getBackgroundSyncInterval();
-}
-
-Future<bool> isBatteryOptimizationDisabled() {
-    return FlutterDaemon().isBatteryOptimizationDisabled();
-}
-
-Future<bool> requestDisableBatteryOptimization() {
-    return FlutterDaemon().requestDisableBatteryOptimization();
-}
-
-Future<bool> openBatteryOptimizationSettings() {
-    return FlutterDaemon().openBatteryOptimizationSettings();
-}
+await daemon.startBackgroundSync(15);
+await daemon.stopBackgroundSync();
+await daemon.getBackgroundSyncStatus();
+await daemon.getBackgroundSyncInterval();
 ```
 
-in `main.dart` you need to add a function that will be called in background
+`getCapabilities()` reports what this platform implements. `startBackgroundSync` rejects an interval below `minimumIntervalMinutes`.
+
+The background isolate needs a top-level `backgroundSync` entrypoint. `markBackgroundSync` returns true when another live sync already holds the lock; this run must still signal completion so its worker can exit. `unmarkBackgroundSync` clears the lock and signals completion, so keep it in `finally`.
 
 ```dart
+final daemon = FlutterDaemon();
+
 @pragma('vm:entry-point')
 Future<void> backgroundSync() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  DartPluginRegistrant.ensureInitialized();
+
   var acquired = false;
   try {
-    print("Background sync triggered");
-    print("- WidgetsFlutterBinding.ensureInitialized()");
-    WidgetsFlutterBinding.ensureInitialized();
-    print("- DartPluginRegistrant.ensureInitialized()");
-    DartPluginRegistrant.ensureInitialized();
-    print("- FlutterDaemon.markBackgroundSync()");
-    final alreadyRunning = await _flutterDaemonPlugin.markBackgroundSync();
-    if (alreadyRunning) {
-      print("Background sync already in progress");
-      await _flutterDaemonPlugin.signalBackgroundSyncComplete();
+    if (await daemon.markBackgroundSync()) {
+      await daemon.signalBackgroundSyncComplete();
       return;
     }
     acquired = true;
-    int tick = 0;
-    int maxTicks = 60;
-    print("path provider test");
-    try {
-      final path = await getApplicationDocumentsDirectory();
-      print("path: ${path.path}");
-    } catch (e) {
-      print("Error: $e");
-    }
-    while (tick < maxTicks) {
-      print("Tick: ${tick++}");
-      sleep(Duration(seconds: 1));
-      if (tick >= maxTicks) {
-        break;
-      }
-    }
-    print("Background sync completed");
+    // Work that must finish within the platform time limit.
   } finally {
     if (acquired) {
-      await _flutterDaemonPlugin.unmarkBackgroundSync();
+      await daemon.unmarkBackgroundSync();
     }
   }
 }
 ```
 
-Please note that there are many things that you just can't do inside of code execuded by 
-
-```kt
-flutterEngine.dartExecutor.executeDartEntrypoint(
-    DartExecutor.DartEntrypoint(appBundlePath, "backgroundSync")
-)
-```
-for example platform channels won't work.
+On Android the background engine does not register other plugins, so their platform channels are unavailable in `backgroundSync`. iOS and Sailfish register the host's plugin registrant.
 
 ## Platform-specific settings
 
 ### Android
 
-```xml
-<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-<uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
-
-<manifest>
-  <application>
-    <service 
-      android:name="androidx.work.impl.foreground.SystemForegroundService"
-      android:foregroundServiceType="dataSync"
-      android:exported="false" />
-  </application>
-</manifest>
-```
+The plugin manifest merges `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_DATA_SYNC`, `POST_NOTIFICATIONS`, and the WorkManager foreground service (`foregroundServiceType="dataSync"`). The host app does not copy those.
 
 Optional, not required feature if you want to prompt users to disable battery optimizations.
 
@@ -157,7 +98,7 @@ Add both keys to the host `Info.plist`. The identifier must match `Bundle.main.b
 </array>
 ```
 
-A processing task can run for several minutes. The example loop is about 75 seconds and can finish, but iOS may expire the task first. Keep `unmarkBackgroundSync()` in the entrypoint's `finally` block. If the isolate is killed, the plugin deletes the sync lock files itself.
+A processing task can run for several minutes. The example spends a couple of minutes on network and websocket checks, and iOS may expire the task first. Keep `unmarkBackgroundSync()` in the entrypoint's `finally` block. If the isolate is killed, the plugin deletes the sync lock files itself.
 
 To fire the task in the simulator, pause in the debugger and run:
 
