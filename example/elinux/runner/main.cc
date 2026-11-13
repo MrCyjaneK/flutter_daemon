@@ -25,7 +25,6 @@ int main(int argc, char** argv) {
     return 0;
   }
 
-  // Creates the Flutter project.
   const auto bundle_path = options.BundlePath();
   const std::wstring fl_path(bundle_path.begin(), bundle_path.end());
   flutter::DartProject project(fl_path);
@@ -48,7 +47,6 @@ int main(int argc, char** argv) {
   view_properties.scale_factor = options.ScaleFactor();
   view_properties.enable_vsync = options.EnableVsync();
 
-  // The Flutter instance hosted by this window.
   FlutterWindow window(view_properties, project);
   if (!window.OnCreate()) {
     return 0;

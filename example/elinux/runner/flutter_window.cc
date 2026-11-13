@@ -20,13 +20,11 @@ bool FlutterWindow::OnCreate() {
   flutter_view_controller_ = std::make_unique<flutter::FlutterViewController>(
       view_properties_, project_);
 
-  // Ensure that basic setup of the controller was successful.
   if (!flutter_view_controller_->engine() ||
       !flutter_view_controller_->view()) {
     return false;
   }
 
-  // Register Flutter plugins.
   RegisterPlugins(flutter_view_controller_->engine());
 
   return true;
@@ -39,11 +37,9 @@ void FlutterWindow::OnDestroy() {
 }
 
 void FlutterWindow::Run() {
-  // Main loop.
   auto next_flutter_event_time =
       std::chrono::steady_clock::time_point::clock::now();
   while (flutter_view_controller_->view()->DispatchEvent()) {
-    // Wait until the next event.
     {
       auto wait_duration =
           std::max(std::chrono::nanoseconds(0),

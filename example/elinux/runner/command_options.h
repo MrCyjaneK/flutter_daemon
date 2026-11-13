@@ -95,7 +95,6 @@ class CommandOptions {
         name, short_name, description, default_value, reader, required,
         required_value);
 
-    // register to show help message.
     registration_order_options_.push_back(options_[name].get());
   }
 

@@ -46,14 +46,6 @@ Future<bool> requestDisableBatteryOptimization() {
 Future<bool> openBatteryOptimizationSettings() {
     return FlutterDaemon().openBatteryOptimizationSettings();
 }
-
-Future<LogData> getLogs() async {
-  return FlutterDaemon().getLogs();
-}
-
-Future<bool> clearLogs() {
-  return FlutterDaemon().clearLogs();
-}
 ```
 
 in `main.dart` you need to add a function that will be called in background
@@ -187,7 +179,7 @@ if (FlutterDaemonRunBackground(argc, argv, RegisterPlugins)) return 0;
 
 That runs the `backgroundSync` Dart entrypoint when the process is started with `--background-sync`. A normal launch continues into the window.
 
-`getCapabilities()` reports what the current platform implements, including `minimumIntervalMinutes`: 15 on Android, 1 on iOS and Sailfish. `startBackgroundSync` rejects a smaller value. On Sailfish only background sync is supported. Work constraints and battery optimization are Android-only. Logs are supported on Android and iOS. The example hides a section when its capability is false, and the eLinux plugin throws if an unsupported method is called anyway.
+`getCapabilities()` reports what the current platform implements, including `minimumIntervalMinutes`: 15 on Android, 1 on iOS and Sailfish. `startBackgroundSync` rejects a smaller value. On Sailfish only background sync is supported. Work constraints and battery optimization are Android-only. The example hides a section when its capability is false, and the eLinux plugin throws if an unsupported method is called anyway.
 
 Packaging is `rpm/` and `.sfosbuild/` (cyanek-sfos), pinned to flutter-sfos 3.44.0. sfosbuild runs from the repository root so `example/` can see this plugin at `path: ../`.
 

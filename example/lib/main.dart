@@ -99,11 +99,9 @@ Function _testWebSocketConnection() {
   Timer? timer;
   
   try {
-    // Initialize the connection
     channel = WebSocketChannel.connect(wsUrl);
     print("WebSocket connection initiated to echo.websocket.org");
     
-    // Listen for messages from the server
     channel.stream.listen(
       (message) {
         print("WebSocket echo received: $message");
@@ -161,13 +159,10 @@ class _MyAppState extends State<MyApp> {
   bool _requireBatteryNotLow = false;
   bool _requiresCharging = false;
   bool _requiresDeviceIdle = false;
-  List<LogEntry> _logs = [];
-  String _logsError = '';
   FlutterDaemonCapabilities _capabilities = const FlutterDaemonCapabilities(
     backgroundSync: false,
     constraints: false,
     batteryOptimization: false,
-    logs: false,
     minimumIntervalMinutes: 1,
   );
 
@@ -209,9 +204,6 @@ class _MyAppState extends State<MyApp> {
       }
       if (capabilities.batteryOptimization) {
         await _checkBatteryOptimizationStatus();
-      }
-      if (capabilities.logs) {
-        await _loadLogs();
       }
     } catch (e) {
       if (!mounted) return;
@@ -333,41 +325,6 @@ class _MyAppState extends State<MyApp> {
     } catch (e) {
       setState(() {
         _statusMessage = 'Error requesting battery optimization: $e';
-      });
-    }
-  }
-
-  Future<void> _loadLogs() async {
-    try {
-      final data = await _flutterDaemonPlugin.getLogs();
-      if (!mounted) return;
-      setState(() {
-        _logs = data.logs.reversed.toList();
-        _logsError = '';
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _logsError = 'Failed to load logs: $e';
-      });
-    }
-  }
-
-  Future<void> _clearStoredLogs() async {
-    try {
-      final cleared = await _flutterDaemonPlugin.clearLogs();
-      if (!cleared) {
-        if (!mounted) return;
-        setState(() {
-          _logsError = 'Failed to clear logs';
-        });
-        return;
-      }
-      await _loadLogs();
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _logsError = 'Failed to clear logs: $e';
       });
     }
   }
@@ -547,45 +504,6 @@ class _MyAppState extends State<MyApp> {
                   onPressed: _checkBatteryOptimizationStatus,
                   child: const Text('Refresh Battery Status'),
                 ),
-                ],
-                if (_capabilities.logs) ...[
-                const SizedBox(height: 24),
-                Text('Logs', style: Theme.of(context).textTheme.titleLarge),
-                const SizedBox(height: 8),
-                if (_logsError.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 8.0),
-                    child: Text(_logsError,
-                        style: const TextStyle(color: Colors.red)),
-                  ),
-                Row(
-                  children: [
-                    OutlinedButton(
-                      onPressed: _loadLogs,
-                      child: const Text('Refresh logs'),
-                    ),
-                    const SizedBox(width: 8),
-                    OutlinedButton(
-                      onPressed: _clearStoredLogs,
-                      child: const Text('Clear logs'),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                if (_logs.isEmpty)
-                  const Text('No logs')
-                else
-                  ..._logs.map(
-                    (entry) => Padding(
-                      padding: const EdgeInsets.only(bottom: 8.0),
-                      child: Text(
-                        '${entry.level}  ${entry.timestamp}'
-                        '${entry.sessionId != null ? '  session ${entry.sessionId}' : ''}\n'
-                        '${entry.message}',
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
-                    ),
-                  ),
                 ],
               ],
             ),

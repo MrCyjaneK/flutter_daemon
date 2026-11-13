@@ -13,7 +13,6 @@ public class FlutterDaemonPlugin: NSObject, FlutterPlugin {
   private static var backgroundEngine: FlutterEngine?
   private static var onBackgroundSyncComplete: (() -> Void)?
   private static var runToken = 0
-  private static var activeSessionId: Int?
 
   /// `<bundle id>.flutter_daemon.processing`
   ///
@@ -33,7 +32,6 @@ public class FlutterDaemonPlugin: NSObject, FlutterPlugin {
       binaryMessenger: registrar.messenger())
     let instance = FlutterDaemonPlugin()
     registrar.addMethodCallDelegate(instance, channel: channel)
-    FileLogger.shared.info("FlutterDaemonPlugin attached to engine")
   }
 
   /// Registers the processing-task launch handler.
@@ -68,8 +66,7 @@ public class FlutterDaemonPlugin: NSObject, FlutterPlugin {
         "backgroundSync": true,
         "constraints": false,
         "batteryOptimization": false,
-        "logs": true,
-        "minimumIntervalMinutes": minimumIntervalMinutes,
+        "minimumIntervalMinutes": Self.minimumIntervalMinutes,
       ])
     case "startBackgroundSync":
       startBackgroundSync(call, result: result)
@@ -82,18 +79,8 @@ public class FlutterDaemonPlugin: NSObject, FlutterPlugin {
     case "backgroundSyncComplete":
       result(nil)
       DispatchQueue.main.async {
-        if let sessionId = FlutterDaemonPlugin.activeSessionId {
-          FileLogger.shared.info(
-            "Received backgroundSyncComplete signal from Dart",
-            sessionId: sessionId)
-        }
         FlutterDaemonPlugin.onBackgroundSyncComplete?()
       }
-    case "getLogs":
-      result(FileLogger.shared.logsJSON())
-    case "clearLogs":
-      FileLogger.shared.clear()
-      result(true)
     case "isBatteryOptimizationDisabled",
          "requestDisableBatteryOptimization",
          "openBatteryOptimizationSettings":
@@ -114,8 +101,7 @@ public class FlutterDaemonPlugin: NSObject, FlutterPlugin {
 
   private func startBackgroundSync(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
     guard Self.registered else {
-      FileLogger.shared.error(
-        "Failed to schedule background sync: registerBackgroundProcessing() was not called")
+      NSLog("flutter_daemon: registerBackgroundProcessing() was not called")
       result(FlutterError(
         code: "BACKGROUND_SYNC_ERROR",
         message: "Call FlutterDaemonPlugin.registerBackgroundProcessing() from application(_:didFinishLaunchingWithOptions:) before the application finishes launching.",
@@ -130,15 +116,13 @@ public class FlutterDaemonPlugin: NSObject, FlutterPlugin {
         details: nil))
       return
     }
-    FileLogger.shared.info("Starting background sync with earliest begin in \(interval) minutes")
     do {
       try Self.submit(intervalMinutes: interval)
       UserDefaults.standard.set(true, forKey: Self.enabledKey)
       UserDefaults.standard.set(interval, forKey: Self.intervalKey)
-      FileLogger.shared.info("Background sync scheduled successfully")
       result("Background sync scheduled. Earliest begin is in \(interval) minutes.")
     } catch {
-      FileLogger.shared.error("Failed to schedule background sync: \(error.localizedDescription)")
+      NSLog("flutter_daemon: failed to schedule background sync: \(error.localizedDescription)")
       result(FlutterError(
         code: "BACKGROUND_SYNC_ERROR",
         message: "Failed to schedule background sync",
@@ -147,12 +131,10 @@ public class FlutterDaemonPlugin: NSObject, FlutterPlugin {
   }
 
   private func stopBackgroundSync(result: @escaping FlutterResult) {
-    FileLogger.shared.info("Stopping background sync")
     UserDefaults.standard.set(false, forKey: Self.enabledKey)
     if let identifier = Self.taskIdentifier {
       BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: identifier)
     }
-    FileLogger.shared.info("Background sync stopped successfully")
     result("Background sync stopped successfully.")
   }
 
@@ -195,14 +177,13 @@ public class FlutterDaemonPlugin: NSObject, FlutterPlugin {
     }
     let interval = UserDefaults.standard.integer(forKey: intervalKey)
     guard interval >= minimumIntervalMinutes else {
-      FileLogger.shared.error("Cannot reschedule processing task without a valid interval")
+      NSLog("flutter_daemon: cannot reschedule without a valid interval")
       return
     }
     do {
       try submit(intervalMinutes: interval)
     } catch {
-      FileLogger.shared.error(
-        "Failed to reschedule processing task: \(error.localizedDescription)")
+      NSLog("flutter_daemon: failed to reschedule: \(error.localizedDescription)")
     }
   }
 
@@ -213,8 +194,6 @@ public class FlutterDaemonPlugin: NSObject, FlutterPlugin {
       scheduleNextIfEnabled()
 
       if activeTask != nil || backgroundEngine != nil {
-        FileLogger.shared.info(
-          "Another background sync is already in progress, skipping this execution")
         task.setTaskCompleted(success: true)
         return
       }
@@ -223,9 +202,6 @@ public class FlutterDaemonPlugin: NSObject, FlutterPlugin {
       let token = runToken
       let gate = CompletionGate()
       activeTask = task
-      let sessionId = FileLogger.shared.startSession("BackgroundSync")
-      activeSessionId = sessionId
-      FileLogger.shared.info("Starting background work process", sessionId: sessionId)
 
       func finish(success: Bool) {
         if !Thread.isMainThread {
@@ -241,13 +217,6 @@ public class FlutterDaemonPlugin: NSObject, FlutterPlugin {
           return
         }
         onBackgroundSyncComplete = nil
-        if let sessionId = activeSessionId {
-          FileLogger.shared.info(
-            "Background sync process completed with \(success ? "success" : "failure")",
-            sessionId: sessionId)
-          FileLogger.shared.endSession(sessionId, success: success)
-          activeSessionId = nil
-        }
         let engine = backgroundEngine
         backgroundEngine = nil
         activeTask = nil
@@ -261,7 +230,7 @@ public class FlutterDaemonPlugin: NSObject, FlutterPlugin {
       }
 
       task.expirationHandler = {
-        FileLogger.shared.error("Processing task expired", sessionId: sessionId)
+        NSLog("flutter_daemon: processing task expired")
         finish(success: false)
       }
 
@@ -275,32 +244,25 @@ public class FlutterDaemonPlugin: NSObject, FlutterPlugin {
         allowHeadlessExecution: true)
       backgroundEngine = engine
 
+      // The engine must be running before a message handler can be set.
       // Register on this engine directly. DartPluginRegistrant only binds
       // Dart implementations; a second registrarForPlugin: for this key
       // asserts, so the background entrypoint must not register it again.
+      guard engine.run(withEntrypoint: "backgroundSync") else {
+        NSLog("flutter_daemon: failed to run backgroundSync")
+        finish(success: false)
+        return
+      }
       guard let registrar = engine.registrar(forPlugin: "FlutterDaemonPlugin") else {
-        FileLogger.shared.error(
-          "Failed to register the background engine plugin",
-          sessionId: sessionId)
+        NSLog("flutter_daemon: failed to register the background engine plugin")
         finish(success: false)
         return
       }
       FlutterDaemonPlugin.register(with: registrar)
 
-      guard engine.run(withEntrypoint: "backgroundSync") else {
-        FileLogger.shared.error("Failed to run backgroundSync", sessionId: sessionId)
-        finish(success: false)
-        return
-      }
-      FileLogger.shared.info(
-        "Running Dart entrypoint backgroundSync",
-        sessionId: sessionId)
-
       DispatchQueue.main.asyncAfter(deadline: .now() + completionTimeout) {
         if token == runToken && activeTask != nil {
-          FileLogger.shared.error(
-            "Timed out waiting for backgroundSyncComplete",
-            sessionId: sessionId)
+          NSLog("flutter_daemon: timed out waiting for backgroundSyncComplete")
         }
         finish(success: false)
       }

@@ -483,8 +483,6 @@ void FlutterDaemonPlugin::HandleMethodCall(
         flutter::EncodableValue(false);
     capabilities[flutter::EncodableValue(std::string("batteryOptimization"))] =
         flutter::EncodableValue(false);
-    capabilities[flutter::EncodableValue(std::string("logs"))] =
-        flutter::EncodableValue(false);
     capabilities[flutter::EncodableValue(std::string("minimumIntervalMinutes"))] =
         flutter::EncodableValue(static_cast<int32_t>(1));
     result->Success(flutter::EncodableValue(capabilities));
@@ -546,11 +544,6 @@ void FlutterDaemonPlugin::HandleMethodCall(
       method == "setRequiresCharging" || method == "getRequiresCharging" ||
       method == "setDeviceIdle" || method == "getDeviceIdle") {
     Unsupported(std::move(result), "work constraints");
-    return;
-  }
-
-  if (method == "getLogs" || method == "clearLogs") {
-    Unsupported(std::move(result), "logs");
     return;
   }
 

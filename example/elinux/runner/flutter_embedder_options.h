@@ -35,7 +35,6 @@ class FlutterEmbedderOptions {
 
 #if defined(FLUTTER_TARGET_BACKEND_GBM) || \
     defined(FLUTTER_TARGET_BACKEND_EGLSTREAM)
-    // no more options.
 #elif defined(FLUTTER_TARGET_BACKEND_X11)
     options_.AddString("title", "t", "Window title", "Flutter", false);
     options_.AddWithoutValue("fullscreen", "f", "Always full-screen display",

@@ -17,7 +17,6 @@ class FlutterWindow {
       const flutter::DartProject project);
   ~FlutterWindow() = default;
 
-  // Prevent copying.
   FlutterWindow(FlutterWindow const&) = delete;
   FlutterWindow& operator=(FlutterWindow const&) = delete;
 

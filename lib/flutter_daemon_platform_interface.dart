@@ -6,14 +6,12 @@ class FlutterDaemonCapabilities {
   final bool backgroundSync;
   final bool constraints;
   final bool batteryOptimization;
-  final bool logs;
   final int minimumIntervalMinutes;
 
   const FlutterDaemonCapabilities({
     required this.backgroundSync,
     required this.constraints,
     required this.batteryOptimization,
-    required this.logs,
     required this.minimumIntervalMinutes,
   });
 
@@ -24,7 +22,6 @@ class FlutterDaemonCapabilities {
       backgroundSync: flag('backgroundSync'),
       constraints: flag('constraints'),
       batteryOptimization: flag('batteryOptimization'),
-      logs: flag('logs'),
       minimumIntervalMinutes: minimum is int ? minimum : 0,
     );
   }
@@ -120,13 +117,5 @@ abstract class FlutterDaemonPlatform extends PlatformInterface {
   
   Future<bool> getDeviceIdle() {
     throw UnimplementedError('getDeviceIdle() has not been implemented.');
-  }
-
-  Future<String> getLogs() {
-    throw UnimplementedError('getLogs() has not been implemented.');
-  }
-
-  Future<bool> clearLogs() {
-    throw UnimplementedError('clearLogs() has not been implemented.');
   }
 }
