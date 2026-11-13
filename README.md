@@ -110,7 +110,7 @@ Replace the identifier with `<bundle id>.flutter_daemon.processing` for another 
 
 ## Sailfish OS
 
-Background sync is a systemd user timer and a oneshot service. The unit name is the application's compile-time `BINARY_NAME` (`flutter_daemon_example` for this example), baked into the plugin when the app is built. Units are written to `~/.config/systemd/user/` when `startBackgroundSync` runs.
+Background sync is a systemd user timer and a oneshot service. The unit name is the executable name (`flutter_daemon_example` for this example). Units are written to `~/.config/systemd/user/` when `startBackgroundSync` runs.
 
 `elinux/runner/main.cc` must call the plugin before the embedder parses arguments. Without that line, `startBackgroundSync` throws and does not install a unit:
 
