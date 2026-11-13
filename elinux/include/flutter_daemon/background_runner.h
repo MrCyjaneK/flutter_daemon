@@ -7,6 +7,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <cerrno>
 #include <cstdlib>
 #include <cstring>
 #include <dirent.h>
@@ -14,6 +15,7 @@
 #include <iostream>
 #include <iterator>
 #include <string>
+#include <sys/wait.h>
 #include <thread>
 #include <unistd.h>
 #include <vector>
@@ -25,9 +27,10 @@
 //
 //   if (FlutterDaemonRunBackground(argc, argv, RegisterPlugins)) return 0;
 //
-// Returns non-zero when this process was started with --background-sync and
-// the call handled it. Returns 0 for a normal GUI launch, after recording that
-// the hook ran.
+// Returns non-zero when this process was started with --background-sync or
+// --uninstall-background-sync and the call handled it. Returns 0 for a normal
+// GUI launch, after recording that the hook ran. --uninstall-background-sync
+// removes this user's timer and service without starting Flutter.
 
 using FlutterDaemonRegisterPlugins = void (*)(flutter::PluginRegistry*);
 
@@ -46,13 +49,97 @@ inline std::string BundlePath(int argc, char** argv) {
   return flutter_daemon::AbsolutePath(flutter_daemon::BundleFromArguments(args));
 }
 
-inline bool IsBackgroundInvocation(int argc, char** argv) {
+inline bool HasArgument(int argc, char** argv, const char* flag) {
   for (int i = 1; i < argc; ++i) {
-    if (std::string(argv[i]) == "--background-sync") {
+    if (std::string(argv[i]) == flag) {
       return true;
     }
   }
   return false;
+}
+
+inline bool IsBackgroundInvocation(int argc, char** argv) {
+  return HasArgument(argc, argv, "--background-sync");
+}
+
+inline bool IsUninstallInvocation(int argc, char** argv) {
+  return HasArgument(argc, argv, "--uninstall-background-sync");
+}
+
+inline bool IsUnitNameChar(unsigned char c) {
+  return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+         (c >= '0' && c <= '9') || c == ':' || c == '_' || c == '.' ||
+         c == '-';
+}
+
+inline std::string BaseName(const std::string& path) {
+  const auto slash = path.find_last_of('/');
+  if (slash == std::string::npos) {
+    return path;
+  }
+  return path.substr(slash + 1);
+}
+
+// Same sanitization as ElinuxBackgroundSync._appId.
+inline std::string BackgroundAppId() {
+  const std::string name = BaseName(flutter_daemon::ReadLink("/proc/self/exe"));
+  std::string sanitized;
+  sanitized.reserve(name.size());
+  for (size_t i = 0; i < name.size(); ++i) {
+    const unsigned char c = static_cast<unsigned char>(name[i]);
+    sanitized.push_back(IsUnitNameChar(c) ? static_cast<char>(c) : '-');
+  }
+  if (sanitized.empty()) {
+    return "flutter-daemon";
+  }
+  return sanitized;
+}
+
+inline void RunUserSystemctl(const std::vector<std::string>& args) {
+  std::vector<std::string> command;
+  command.reserve(args.size() + 2);
+  command.emplace_back("/usr/bin/systemctl");
+  command.emplace_back("--user");
+  command.insert(command.end(), args.begin(), args.end());
+
+  std::vector<char*> argv;
+  argv.reserve(command.size() + 1);
+  for (std::string& arg : command) {
+    argv.push_back(&arg[0]);
+  }
+  argv.push_back(nullptr);
+
+  const pid_t pid = ::fork();
+  if (pid < 0) {
+    return;
+  }
+  if (pid == 0) {
+    ::execv("/usr/bin/systemctl", argv.data());
+    _exit(127);
+  }
+  int status = 0;
+  while (::waitpid(pid, &status, 0) < 0 && errno == EINTR) {
+  }
+}
+
+inline void DeleteFile(const std::string& path) {
+  ::unlink(path.c_str());
+}
+
+// Current user only. systemctl failures are ignored, and the three unit files
+// are removed even when the user bus is down.
+inline void UninstallBackgroundUnits() {
+  const std::string id = BackgroundAppId();
+  RunUserSystemctl({"disable", "--now", id + ".timer"});
+  RunUserSystemctl({"stop", id + ".service"});
+  const char* home = std::getenv("HOME");
+  if (home != nullptr && home[0] != '\0') {
+    const std::string root(home);
+    DeleteFile(root + "/.config/systemd/user/" + id + ".service");
+    DeleteFile(root + "/.config/systemd/user/" + id + ".timer");
+    DeleteFile(root + "/.config/" + id + "/flutter_daemon.conf");
+  }
+  RunUserSystemctl({"daemon-reload"});
 }
 
 inline bool CmdlineRequestsBackgroundSync(const std::string& path) {
@@ -236,6 +323,10 @@ inline bool RunTinyView(const std::wstring& bundle,
 inline int FlutterDaemonRunBackground(int argc, char** argv,
                                       FlutterDaemonRegisterPlugins register_plugins) {
   FlutterDaemonMarkRunnerHook();
+  if (flutter_daemon_internal::IsUninstallInvocation(argc, argv)) {
+    flutter_daemon_internal::UninstallBackgroundUnits();
+    return 1;
+  }
   if (!flutter_daemon_internal::IsBackgroundInvocation(argc, argv)) {
     return 0;
   }

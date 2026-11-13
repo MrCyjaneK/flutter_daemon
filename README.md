@@ -120,12 +120,8 @@ if (FlutterDaemonRunBackground(argc, argv, RegisterPlugins)) return 0;
 
 That runs the `backgroundSync` Dart entrypoint when the process is started with `--background-sync`. A normal launch continues into the window.
 
-`getCapabilities()` reports what the current platform implements, including `minimumIntervalMinutes`: 15 on Android, 1 on iOS and Sailfish. `startBackgroundSync` rejects a smaller value. On Sailfish only background sync is supported. Work constraints and battery optimization are Android-only. The example hides a section when its capability is false, and the eLinux plugin throws if an unsupported method is called anyway.
-
-Packaging is `rpm/` and `.sfosbuild/` (cyanek-sfos), pinned to flutter-sfos 3.44.0. sfosbuild runs from the repository root so `example/` can see this plugin at `path: ../`.
-
 ```bash
-sfosbuild --network --in-place 5.1.0.11 aarch64 rpm/flutter-daemon.yaml
+sfosbuild --network --in-place 5.1.0.11 aarch64 rpm/flutter-daemon.spec
 ```
 
 ## Special thanks
