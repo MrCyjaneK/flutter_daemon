@@ -332,8 +332,8 @@ bool StartSync(int interval_minutes, std::string* message) {
     *message = kHookMissing;
     return false;
   }
-  if (interval_minutes <= 0) {
-    *message = "interval must be a positive number of minutes";
+  if (interval_minutes < 1) {
+    *message = "intervalMinutes must be at least 1";
     return false;
   }
 
@@ -485,6 +485,8 @@ void FlutterDaemonPlugin::HandleMethodCall(
         flutter::EncodableValue(false);
     capabilities[flutter::EncodableValue(std::string("logs"))] =
         flutter::EncodableValue(false);
+    capabilities[flutter::EncodableValue(std::string("minimumIntervalMinutes"))] =
+        flutter::EncodableValue(static_cast<int32_t>(1));
     result->Success(flutter::EncodableValue(capabilities));
     return;
   }
@@ -497,7 +499,7 @@ void FlutterDaemonPlugin::HandleMethodCall(
 
   if (method == "startBackgroundSync") {
     const int interval =
-        ReadIntArgument(method_call.arguments(), "intervalMinutes", 15);
+        ReadIntArgument(method_call.arguments(), "intervalMinutes", -1);
     std::string message;
     if (!StartSync(interval, &message)) {
       result->Error("BACKGROUND_SYNC_ERROR", message);

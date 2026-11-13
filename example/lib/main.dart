@@ -83,9 +83,6 @@ Future<void> backgroundSync() async {
       print("Tick: ${tick++}");
       sleep(Duration(seconds: 1));
       await _checkNetwork();
-      if (tick >= maxTicks) {
-        break;
-      }
     }
     print("Background sync completed");
   } finally {
@@ -152,14 +149,14 @@ class MyApp extends StatefulWidget {
 }
 
 class _MyAppState extends State<MyApp> {
+  static const _presetIntervals = [1, 15, 30, 60, 120, 180, 360, 720, 1440];
+
   String _platformVersion = 'Unknown';
   bool _isSyncActive = false;
   String _statusMessage = '';
   Timer? _statusCheckTimer;
-  int _syncIntervalMinutes = -1;
+  int _syncIntervalMinutes = 15;
   bool _isBatteryOptDisabled = false;
-  
-  // New state variables for constraints
   bool _useUnmeteredNetwork = false;
   bool _requireBatteryNotLow = false;
   bool _requiresCharging = false;
@@ -171,7 +168,14 @@ class _MyAppState extends State<MyApp> {
     constraints: false,
     batteryOptimization: false,
     logs: false,
+    minimumIntervalMinutes: 1,
   );
+
+  List<int> get _intervalChoices {
+    final minimum = _capabilities.minimumIntervalMinutes;
+    final choices = _presetIntervals.where((value) => value >= minimum).toList();
+    return choices.isEmpty ? [minimum] : choices;
+  }
 
   @override
   void initState() {
@@ -179,23 +183,26 @@ class _MyAppState extends State<MyApp> {
     initPlatformState();
     _loadCapabilities();
     _checkBackgroundSyncStatus();
-
     _flutterDaemonPlugin.getBackgroundSyncInterval().then((value) {
-      setState(() {
-        _syncIntervalMinutes = value ?? -1;
-      });
+      if (!mounted) return;
+      setState(() => _syncIntervalMinutes = _allowedInterval(value));
     });
-
     _statusCheckTimer = Timer.periodic(
         const Duration(seconds: 5), (_) => _checkBackgroundSyncStatus());
   }
-  
+
+  int _allowedInterval(int? minutes) {
+    final choices = _intervalChoices;
+    return minutes != null && choices.contains(minutes) ? minutes : choices.first;
+  }
+
   Future<void> _loadCapabilities() async {
     try {
       final capabilities = await _flutterDaemonPlugin.getCapabilities();
       if (!mounted) return;
       setState(() {
         _capabilities = capabilities;
+        _syncIntervalMinutes = _allowedInterval(_syncIntervalMinutes);
       });
       if (capabilities.constraints) {
         await _loadConstraintSettings();
@@ -214,7 +221,6 @@ class _MyAppState extends State<MyApp> {
     }
   }
 
-  // Load all constraint settings
   Future<void> _loadConstraintSettings() async {
     try {
       final useUnmetered = await _flutterDaemonPlugin.getNetworkType();
@@ -248,8 +254,7 @@ class _MyAppState extends State<MyApp> {
   Future<void> initPlatformState() async {
     String platformVersion;
     try {
-      platformVersion = await _flutterDaemonPlugin.getPlatformVersion() ??
-          'Unknown platform version';
+      platformVersion = await _flutterDaemonPlugin.getPlatformVersion();
     } on PlatformException {
       platformVersion = 'Failed to get platform version.';
     }
@@ -270,7 +275,7 @@ class _MyAppState extends State<MyApp> {
         });
       } else {
         final result = await _flutterDaemonPlugin
-            .startBackgroundSync(_syncIntervalMinutes);
+            .startBackgroundSync(_allowedInterval(_syncIntervalMinutes));
         setState(() {
           _statusMessage = result;
         });
@@ -377,6 +382,46 @@ class _MyAppState extends State<MyApp> {
     }
   }
 
+  String _intervalLabel(int minutes) {
+    final hours = (minutes ~/ 60).toString().padLeft(2, '0');
+    final mins = (minutes % 60).toString().padLeft(2, '0');
+    return '${hours}h${mins}m';
+  }
+
+  Widget _statusDot(bool on, String label) {
+    return Row(
+      children: [
+        Container(
+          width: 12,
+          height: 12,
+          decoration: BoxDecoration(
+            color: on ? Colors.green : Colors.red,
+            shape: BoxShape.circle,
+          ),
+        ),
+        const SizedBox(width: 8),
+        Text(label, style: Theme.of(context).textTheme.bodyLarge),
+      ],
+    );
+  }
+
+  Widget _constraint(
+    String title,
+    String subtitle,
+    bool value,
+    Future<bool> Function(bool value) apply,
+    void Function(bool value) store,
+  ) {
+    return SwitchListTile(
+      title: Text(title),
+      subtitle: Text(subtitle),
+      value: value,
+      onChanged: (next) async {
+        if (await apply(next) && mounted) setState(() => store(next));
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
@@ -390,30 +435,13 @@ class _MyAppState extends State<MyApp> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                    'Running on: $_platformVersion every $_syncIntervalMinutes minutes',
+                Text('Running on: $_platformVersion',
                     style: Theme.of(context).textTheme.titleMedium),
                 const SizedBox(height: 24),
                 Text('Background Sync Status',
                     style: Theme.of(context).textTheme.titleLarge),
                 const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Container(
-                      width: 12,
-                      height: 12,
-                      decoration: BoxDecoration(
-                        color: _isSyncActive ? Colors.green : Colors.red,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      _isSyncActive ? 'Active' : 'Inactive',
-                      style: Theme.of(context).textTheme.bodyLarge,
-                    ),
-                  ],
-                ),
+                _statusDot(_isSyncActive, _isSyncActive ? 'Active' : 'Inactive'),
                 if (_statusMessage.isNotEmpty)
                   Padding(
                     padding: const EdgeInsets.only(top: 8.0),
@@ -421,102 +449,59 @@ class _MyAppState extends State<MyApp> {
                         style: const TextStyle(color: Colors.blue)),
                   ),
                 const SizedBox(height: 16),
-                Row(
-                  children: [
-                    Text('Sync Interval (minutes): '),
-                    SizedBox(width: 8),
-                    DropdownButton<int>(
-                      value: _syncIntervalMinutes,
-                      items:
-                          [-1, 15, 30, 60, 120, 180, 360, 720, 1440].map((int value) {
-                        return DropdownMenuItem<int>(
-                          value: value,
-                          child: Text(
-                              '${(value ~/ 60).toString().padLeft(2, '0')}h${(value % 60).toString().padLeft(2, '0')}m'),
-                        );
-                      }).toList(),
-                      onChanged: (newValue) {
-                        if (newValue != null) {
-                          setState(() {
-                            _syncIntervalMinutes = newValue;
-                          });
-                        }
-                      },
-                    ),
+                DropdownButton<int>(
+                  value: _allowedInterval(_syncIntervalMinutes),
+                  items: [
+                    for (final minutes in _intervalChoices)
+                      DropdownMenuItem(
+                        value: minutes,
+                        child: Text(_intervalLabel(minutes)),
+                      ),
                   ],
+                  onChanged: (minutes) {
+                    if (minutes != null) {
+                      setState(() => _syncIntervalMinutes = minutes);
+                    }
+                  },
                 ),
                 const SizedBox(height: 24),
 
                 if (_capabilities.constraints) ...[
-                Text('Work Constraints',
-                    style: Theme.of(context).textTheme.titleLarge),
-                const SizedBox(height: 8),
-                
-                // Network Type
-                SwitchListTile(
-                  title: const Text('Require Unmetered Network'),
-                  subtitle: const Text('Only run on Wi-Fi or unmetered connections'),
-                  value: _useUnmeteredNetwork,
-                  onChanged: (value) async {
-                    final success = await _flutterDaemonPlugin.setNetworkType(value);
-                    if (success && mounted) {
-                      setState(() {
-                        _useUnmeteredNetwork = value;
-                      });
-                    }
-                  },
-                ),
-                
-                // Battery Not Low
-                SwitchListTile(
-                  title: const Text('Require Battery Not Low'),
-                  subtitle: const Text('Skip when device is in low battery mode'),
-                  value: _requireBatteryNotLow,
-                  onChanged: (value) async {
-                    final success = await _flutterDaemonPlugin.setBatteryNotLow(value);
-                    if (success && mounted) {
-                      setState(() {
-                        _requireBatteryNotLow = value;
-                      });
-                    }
-                  },
-                ),
-                
-                // Requires Charging
-                SwitchListTile(
-                  title: const Text('Require Charging'),
-                  subtitle: const Text('Only run when device is charging'),
-                  value: _requiresCharging,
-                  onChanged: (value) async {
-                    final success = await _flutterDaemonPlugin.setRequiresCharging(value);
-                    if (success && mounted) {
-                      setState(() {
-                        _requiresCharging = value;
-                      });
-                    }
-                  },
-                ),
-                
-                // Device Idle
-                SwitchListTile(
-                  title: const Text('Require Device Idle'),
-                  subtitle: const Text('Only run when device is idle'),
-                  value: _requiresDeviceIdle,
-                  onChanged: (value) async {
-                    final success = await _flutterDaemonPlugin.setDeviceIdle(value);
-                    if (success && mounted) {
-                      setState(() {
-                        _requiresDeviceIdle = value;
-                      });
-                    }
-                  },
-                ),
-                
-                // Refresh constraints button
-                OutlinedButton(
-                  onPressed: _loadConstraintSettings,
-                  child: const Text('Refresh Constraint Settings'),
-                ),
+                  Text('Work Constraints',
+                      style: Theme.of(context).textTheme.titleLarge),
+                  const SizedBox(height: 8),
+                  _constraint(
+                    'Require Unmetered Network',
+                    'Only run on Wi-Fi or unmetered connections',
+                    _useUnmeteredNetwork,
+                    _flutterDaemonPlugin.setNetworkType,
+                    (value) => _useUnmeteredNetwork = value,
+                  ),
+                  _constraint(
+                    'Require Battery Not Low',
+                    'Skip when device is in low battery mode',
+                    _requireBatteryNotLow,
+                    _flutterDaemonPlugin.setBatteryNotLow,
+                    (value) => _requireBatteryNotLow = value,
+                  ),
+                  _constraint(
+                    'Require Charging',
+                    'Only run when device is charging',
+                    _requiresCharging,
+                    _flutterDaemonPlugin.setRequiresCharging,
+                    (value) => _requiresCharging = value,
+                  ),
+                  _constraint(
+                    'Require Device Idle',
+                    'Only run when device is idle',
+                    _requiresDeviceIdle,
+                    _flutterDaemonPlugin.setDeviceIdle,
+                    (value) => _requiresDeviceIdle = value,
+                  ),
+                  OutlinedButton(
+                    onPressed: _loadConstraintSettings,
+                    child: const Text('Refresh Constraint Settings'),
+                  ),
                 ],
 
                 const SizedBox(height: 24),
@@ -543,22 +528,9 @@ class _MyAppState extends State<MyApp> {
                 Text('Battery Optimization',
                     style: Theme.of(context).textTheme.titleLarge),
                 const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Container(
-                      width: 12,
-                      height: 12,
-                      decoration: BoxDecoration(
-                        color: _isBatteryOptDisabled ? Colors.green : Colors.red,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      _isBatteryOptDisabled ? 'Disabled' : 'Enabled',
-                      style: Theme.of(context).textTheme.bodyLarge,
-                    ),
-                  ],
+                _statusDot(
+                  _isBatteryOptDisabled,
+                  _isBatteryOptDisabled ? 'Disabled' : 'Enabled',
                 ),
                 const SizedBox(height: 16),
                 ElevatedButton(

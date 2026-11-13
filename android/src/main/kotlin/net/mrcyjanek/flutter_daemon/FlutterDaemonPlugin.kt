@@ -27,6 +27,10 @@ import androidx.core.app.NotificationCompat
 import android.content.pm.ServiceInfo
 
 class FlutterDaemonPlugin: FlutterPlugin, MethodCallHandler {
+  companion object {
+    const val MINIMUM_INTERVAL_MINUTES = 15
+  }
+
   private lateinit var channel : MethodChannel
   private lateinit var context: Context
   private lateinit var logger: FileLogger
@@ -51,11 +55,20 @@ class FlutterDaemonPlugin: FlutterPlugin, MethodCallHandler {
           "constraints" to true,
           "batteryOptimization" to true,
           "logs" to true,
+          "minimumIntervalMinutes" to MINIMUM_INTERVAL_MINUTES,
         ))
       }
       "startBackgroundSync" -> {
         try {
-          val intervalMinutes = call.argument<Int>("intervalMinutes") ?: 15
+          val intervalMinutes = call.argument<Int>("intervalMinutes")
+          if (intervalMinutes == null || intervalMinutes < MINIMUM_INTERVAL_MINUTES) {
+            result.error(
+              "BACKGROUND_SYNC_ERROR",
+              "intervalMinutes must be at least $MINIMUM_INTERVAL_MINUTES",
+              null,
+            )
+            return
+          }
           logger.logInfo("Starting background sync with interval: $intervalMinutes minutes")
           
           val constraints = buildConstraintsFromPreferences()

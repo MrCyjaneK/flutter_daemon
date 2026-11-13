@@ -7,21 +7,25 @@ class FlutterDaemonCapabilities {
   final bool constraints;
   final bool batteryOptimization;
   final bool logs;
+  final int minimumIntervalMinutes;
 
   const FlutterDaemonCapabilities({
     required this.backgroundSync,
     required this.constraints,
     required this.batteryOptimization,
     required this.logs,
+    required this.minimumIntervalMinutes,
   });
 
   factory FlutterDaemonCapabilities.fromMap(Map<Object?, Object?> map) {
     bool flag(String key) => map[key] == true;
+    final minimum = map['minimumIntervalMinutes'];
     return FlutterDaemonCapabilities(
       backgroundSync: flag('backgroundSync'),
       constraints: flag('constraints'),
       batteryOptimization: flag('batteryOptimization'),
       logs: flag('logs'),
+      minimumIntervalMinutes: minimum is int ? minimum : 0,
     );
   }
 }
