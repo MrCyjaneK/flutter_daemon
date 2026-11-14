@@ -2,6 +2,31 @@ import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 
 import 'flutter_daemon_method_channel.dart';
 
+class FlutterDaemonCapabilities {
+  final bool backgroundSync;
+  final bool constraints;
+  final bool batteryOptimization;
+  final int minimumIntervalMinutes;
+
+  const FlutterDaemonCapabilities({
+    required this.backgroundSync,
+    required this.constraints,
+    required this.batteryOptimization,
+    required this.minimumIntervalMinutes,
+  });
+
+  factory FlutterDaemonCapabilities.fromMap(Map<Object?, Object?> map) {
+    bool flag(String key) => map[key] == true;
+    final minimum = map['minimumIntervalMinutes'];
+    return FlutterDaemonCapabilities(
+      backgroundSync: flag('backgroundSync'),
+      constraints: flag('constraints'),
+      batteryOptimization: flag('batteryOptimization'),
+      minimumIntervalMinutes: minimum is int ? minimum : 0,
+    );
+  }
+}
+
 abstract class FlutterDaemonPlatform extends PlatformInterface {
   FlutterDaemonPlatform() : super(token: _token);
 
@@ -16,8 +41,8 @@ abstract class FlutterDaemonPlatform extends PlatformInterface {
     _instance = instance;
   }
 
-  Future<String?> getPlatformVersion() {
-    throw UnimplementedError('platformVersion() has not been implemented.');
+  Future<FlutterDaemonCapabilities> getCapabilities() {
+    throw UnimplementedError('getCapabilities() has not been implemented.');
   }
 
   Future<String> startBackgroundSync(int intervalMinutes) {
@@ -39,6 +64,11 @@ abstract class FlutterDaemonPlatform extends PlatformInterface {
         'getBackgroundSyncInterval() has not been implemented.');
   }
 
+  Future<void> signalBackgroundSyncComplete() {
+    throw UnimplementedError(
+        'signalBackgroundSyncComplete() has not been implemented.');
+  }
+
   Future<bool> isBatteryOptimizationDisabled() {
     throw UnimplementedError(
         'isBatteryOptimizationDisabled() has not been implemented.');
@@ -58,43 +88,35 @@ abstract class FlutterDaemonPlatform extends PlatformInterface {
     throw UnimplementedError(
         'setNetworkType(useUnmetered: $useUnmetered) has not been implemented.');
   }
-  
+
   Future<bool> getNetworkType() {
     throw UnimplementedError('getNetworkType() has not been implemented.');
   }
-  
+
   Future<bool> setBatteryNotLow(bool enabled) {
     throw UnimplementedError(
         'setBatteryNotLow(enabled: $enabled) has not been implemented.');
   }
-  
+
   Future<bool> getBatteryNotLow() {
     throw UnimplementedError('getBatteryNotLow() has not been implemented.');
   }
-  
+
   Future<bool> setRequiresCharging(bool enabled) {
     throw UnimplementedError(
         'setRequiresCharging(enabled: $enabled) has not been implemented.');
   }
-  
+
   Future<bool> getRequiresCharging() {
     throw UnimplementedError('getRequiresCharging() has not been implemented.');
   }
-  
+
   Future<bool> setDeviceIdle(bool enabled) {
     throw UnimplementedError(
         'setDeviceIdle(enabled: $enabled) has not been implemented.');
   }
-  
+
   Future<bool> getDeviceIdle() {
     throw UnimplementedError('getDeviceIdle() has not been implemented.');
-  }
-
-  Future<String> getLogs() {
-    throw UnimplementedError('getLogs() has not been implemented.');
-  }
-
-  Future<bool> clearLogs() {
-    throw UnimplementedError('clearLogs() has not been implemented.');
   }
 }

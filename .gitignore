@@ -31,3 +31,11 @@ migrate_working_dir/
 .flutter-plugins
 .flutter-plugins-dependencies
 build/
+/*.rpm
+/rpms/
+
+*.list
+generated_*.cc
+generated_*.dart
+generated_*.h
+generated_*.cmake

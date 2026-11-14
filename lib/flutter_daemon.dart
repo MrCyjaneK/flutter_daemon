@@ -1,20 +1,17 @@
-import 'dart:async';
-import 'dart:convert';
-import 'dart:io' as io;
-import 'dart:isolate';
-import 'dart:math';
-import 'package:flutter/services.dart';
-import 'package:flutter_daemon/src/logging.dart';
-import 'package:path/path.dart' as p;
+import 'package:flutter/foundation.dart';
+
 import 'flutter_daemon_platform_interface.dart';
-export 'src/logging.dart';
+import 'src/background_sync_lock.dart';
+
+export 'flutter_daemon_platform_interface.dart' show FlutterDaemonCapabilities;
 
 class FlutterDaemon {
-  static const MethodChannel _channel = MethodChannel('flutter_daemon');
+  final BackgroundSyncLock _lock = BackgroundSyncLock(
+    signalComplete: _signalBackgroundSyncComplete,
+  );
 
-  Future<String> getPlatformVersion() async {
-    final String version = await _channel.invokeMethod('getPlatformVersion');
-    return version;
+  Future<FlutterDaemonCapabilities> getCapabilities() {
+    return FlutterDaemonPlatform.instance.getCapabilities();
   }
 
   Future<String> startBackgroundSync(int intervalMinutes) {
@@ -33,6 +30,25 @@ class FlutterDaemon {
     return FlutterDaemonPlatform.instance.getBackgroundSyncInterval();
   }
 
+  /// Tells the platform worker that this background entrypoint is finished.
+  ///
+  /// Does not release the sync lock. Call this when [markBackgroundSync]
+  /// reports that another live sync already owns the lock, so this worker
+  /// can stop waiting without cancelling that other sync.
+  Future<void> signalBackgroundSyncComplete() {
+    return _signalBackgroundSyncComplete();
+  }
+
+  Future<bool> unmarkBackgroundSync() async {
+    await _lock.release();
+    return true;
+  }
+
+  /// Returns true when another live sync already owns the lock.
+  Future<bool> markBackgroundSync() {
+    return _lock.mark();
+  }
+
   Future<bool> isBatteryOptimizationDisabled() {
     return FlutterDaemonPlatform.instance.isBatteryOptimizationDisabled();
   }
@@ -43,110 +59,6 @@ class FlutterDaemon {
 
   Future<bool> openBatteryOptimizationSettings() {
     return FlutterDaemonPlatform.instance.openBatteryOptimizationSettings();
-  }
-
-  Future<bool> isBackgroundSyncActive() async {
-    final io.Directory tempDir = io.Directory.systemTemp;
-    print("tempDir: ${tempDir.path}");
-    final String path =
-        p.join(tempDir.path, "flutter_daemon_background", "__daemonfile");
-
-    final directory = io.Directory(p.dirname(path));
-    if (!directory.existsSync()) {
-      directory.createSync(recursive: true);
-    }
-
-    final statFile = io.File(path);
-
-    if (statFile.existsSync()) {
-      try {
-        final content = await statFile.readAsString();
-        final lastTimestamp = DateTime.parse(content);
-        final now = DateTime.now();
-        final difference = now.difference(lastTimestamp);
-
-        if (difference.inMinutes < 5) {
-          return true;
-        }
-      } catch (e) {
-        print("Error parsing timestamp: $e");
-      }
-    }
-    return false;
-  }
-
-  final String path = p.join(io.Directory.systemTemp.path,
-      "flutter_daemon_background", "__daemonfile");
-
-  final String pidFilePath = p.join(io.Directory.systemTemp.path,
-      "flutter_daemon_background", "__daemonfile.pid");
-
-  Future<bool> unmarkBackgroundSync() async {
-    final pidFile = io.File(pidFilePath);
-    if (pidFile.existsSync()) {
-      final pidStr = pidFile.readAsStringSync();
-      final pid = int.tryParse(pidStr);
-      if (pid != null) {
-        io.Process.killPid(pid);
-        await Future.delayed(Duration(milliseconds: 250));
-        io.Process.killPid(pid, io.ProcessSignal.sigkill);
-      }
-    }
-    final statFile = io.File(path);
-    if (statFile.existsSync()) {
-      statFile.deleteSync();
-    }
-    return true;
-  }
-
-  Future<bool> markBackgroundSync() async {
-    print("Marking background sync");
-
-    await Future.delayed(Duration(seconds: 1));
-
-    final directory = io.Directory(p.dirname(path));
-    if (!directory.existsSync()) {
-      directory.createSync(recursive: true);
-    }
-
-    final statFile = io.File(path);
-
-    if (statFile.existsSync()) {
-      try {
-        final content = await statFile.readAsString();
-        final lastTimestamp = DateTime.parse(content);
-        final now = DateTime.now();
-        final difference = now.difference(lastTimestamp);
-
-        if (difference.inMinutes < 5) {
-          print(
-              "Daemon already running (last heartbeat: ${difference.inMinutes} minutes ago)");
-          return true;
-        }
-      } catch (e) {
-        print("Error parsing timestamp: $e");
-      }
-    } else {
-      statFile.createSync(recursive: true);
-    }
-    io.File(pidFilePath).writeAsStringSync(io.pid.toString());
-
-    final rootToken = ServicesBinding.rootIsolateToken;
-    final randomId = Random.secure().nextInt(1000000);
-    unawaited(Isolate.run(() async {
-      BackgroundIsolateBinaryMessenger.ensureInitialized(rootToken!);
-      while (true) {
-        if (!statFile.existsSync()) {
-          print("[$randomId] Stopping background sync");
-          final channel = MethodChannel('flutter_daemon');
-          await channel.invokeMethod('backgroundSyncComplete');
-          return;
-        }
-        await statFile.writeAsString(DateTime.now().toIso8601String());
-        await Future.delayed(Duration(seconds: 1));
-      }
-    }));
-    return false;
   }
 
   Future<bool> setNetworkType(bool useUnmetered) {
@@ -180,13 +92,14 @@ class FlutterDaemon {
   Future<bool> getDeviceIdle() {
     return FlutterDaemonPlatform.instance.getDeviceIdle();
   }
+}
 
-  Future<LogData> getLogs() async {
-    final String logsJson = await FlutterDaemonPlatform.instance.getLogs();
-    return LogData.fromJson(json.decode(logsJson));
-  }
-
-  Future<bool> clearLogs() {
-    return FlutterDaemonPlatform.instance.clearLogs();
+Future<void> _signalBackgroundSyncComplete() async {
+  try {
+    await FlutterDaemonPlatform.instance.signalBackgroundSyncComplete();
+  } catch (e) {
+    if (kDebugMode) {
+      debugPrint('flutter_daemon: failed to signal backgroundSyncComplete: $e');
+    }
   }
 }

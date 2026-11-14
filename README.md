@@ -1,129 +1,67 @@
 # Flutter Daemon
 
-> This plugin allows you to run Dart code at specified intervals, even when your app is not in the foreground.
+> This plugin allows you to run Dart code at a chosen interval, even when your app is not in the foreground.
 
 ## Features
 
 - Schedule periodic background sync tasks
 - Control and monitor background task execution
 - Run Dart code in the background with full Flutter engine support
-- Configure sync intervals as needed for your application
+- Configure the sync interval in minutes
 
 
-# Installation
+## Installation
 
 ```bash
 $ dart pub add flutter_daemon --git-url=https://github.com/MrCyjaneK/flutter_daemon
 ```
 
-# Usage
+## Usage
 
 ```dart
-Future<String> startBackgroundSync(int intervalMinutes) {
-    return FlutterDaemon().startBackgroundSync(intervalMinutes);
-}
+final daemon = FlutterDaemon();
 
-Future<String> stopBackgroundSync() {
-    return FlutterDaemon().stopBackgroundSync();
-}
-
-Future<bool> getBackgroundSyncStatus() {
-    return FlutterDaemon().getBackgroundSyncStatus();
-}
-
-Future<int?> getBackgroundSyncInterval() {
-    return FlutterDaemon().getBackgroundSyncInterval();
-}
-
-Future<bool> isBatteryOptimizationDisabled() {
-    return FlutterDaemon().isBatteryOptimizationDisabled();
-}
-
-Future<bool> requestDisableBatteryOptimization() {
-    return FlutterDaemon().requestDisableBatteryOptimization();
-}
-
-Future<bool> openBatteryOptimizationSettings() {
-    return FlutterDaemon().openBatteryOptimizationSettings();
-}
-
-Future<LogData> getLogs() async {
-  return FlutterDaemon().getLogs();
-}
-
-Future<bool> clearLogs() {
-  return FlutterDaemon().clearLogs();
-}
+await daemon.startBackgroundSync(15);
+await daemon.stopBackgroundSync();
+await daemon.getBackgroundSyncStatus();
+await daemon.getBackgroundSyncInterval();
 ```
 
-in `main.dart` you need to add a function that will be called in background
+`getCapabilities()` reports what this platform implements. `startBackgroundSync` rejects an interval below `minimumIntervalMinutes`.
+
+The background isolate needs a top-level `backgroundSync` entrypoint. `markBackgroundSync` returns true when another live sync already holds the lock; this run must still signal completion so its worker can exit. `unmarkBackgroundSync` clears the lock and signals completion, so keep it in `finally`.
 
 ```dart
+final daemon = FlutterDaemon();
+
 @pragma('vm:entry-point')
 Future<void> backgroundSync() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  DartPluginRegistrant.ensureInitialized();
+
+  var acquired = false;
   try {
-    print("Background sync triggered");
-    print("- WidgetsFlutterBinding.ensureInitialized()");
-    WidgetsFlutterBinding.ensureInitialized();
-    print("- DartPluginRegistrant.ensureInitialized()");
-    DartPluginRegistrant.ensureInitialized();
-    print("- FlutterDaemon.markBackgroundSync()");
-    final val = await _flutterDaemonPlugin.markBackgroundSync();
-    if (val) {
-      print("Background sync already in progress");
+    if (await daemon.markBackgroundSync()) {
+      await daemon.signalBackgroundSyncComplete();
       return;
     }
-    int tick = 0;
-    int maxTicks = 60;
-    print("path provider test");
-    try {
-      final path = await getApplicationDocumentsDirectory();
-      print("path: ${path.path}");
-    } catch (e) {
-      print("Error: $e");
-    }
-    while (tick < maxTicks) {
-      print("Tick: ${tick++}");
-      sleep(Duration(seconds: 1));
-      if (tick >= maxTicks) {
-        break;
-      }
-    }
-    print("Background sync completed");
+    acquired = true;
+    // Work that must finish within the platform time limit.
   } finally {
-    _flutterDaemonPlugin.unmarkBackgroundSync();
+    if (acquired) {
+      await daemon.unmarkBackgroundSync();
+    }
   }
 }
 ```
 
-Please note that there are many things that you just can't do inside of code execuded by 
-
-```kt
-flutterEngine.dartExecutor.executeDartEntrypoint(
-    DartExecutor.DartEntrypoint(appBundlePath, "backgroundSync")
-)
-```
-for example platform channels won't work.
+On Android the background engine does not register other plugins, so their platform channels are unavailable in `backgroundSync`. iOS and Sailfish register the host's plugin registrant.
 
 ## Platform-specific settings
 
 ### Android
 
-```xml
-<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-<uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
-
-<manifest>
-  <application>
-    <service 
-      android:name="androidx.work.impl.foreground.SystemForegroundService"
-      android:foregroundServiceType="dataSync"
-      android:exported="false" />
-  </application>
-</manifest>
-```
+The plugin manifest merges `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_DATA_SYNC`, `POST_NOTIFICATIONS`, and the WorkManager foreground service (`foregroundServiceType="dataSync"`). The host app does not copy those.
 
 Optional, not required feature if you want to prompt users to disable battery optimizations.
 
@@ -132,6 +70,59 @@ Optional, not required feature if you want to prompt users to disable battery op
 ```
 
 If you don't add this permission then users will be required to do a couple manual steps, open settings, find app name, and manually disable battery optimizations.
+
+### iOS
+
+Background sync is a `BGProcessingTask` and requires iOS 15. `intervalMinutes` is required and must be at least 1. It is written to `earliestBeginDate` as `now + intervalMinutes`: iOS will not launch the task before that, and the request stays queued after it. The system runs it while the device is idle and prefers the device to be charging. Each run submits the next request with the same interval. If sync is enabled and iOS has no pending request, the next launch submits one again. `startBackgroundSync` throws if the launch handler was not registered.
+
+Register the handler from `application(_:didFinishLaunchingWithOptions:)` on every launch, including a cold launch that exists only to service the task, before that method returns:
+
+```swift
+import flutter_daemon
+
+FlutterDaemonPlugin.registerBackgroundProcessing()
+```
+
+The example does this before `super.application`. The background engine loads `GeneratedPluginRegistrant` itself, which is the same plugin set as the foreground engine. Foreground registration on the current Flutter template happens later, from `didInitializeImplicitFlutterEngine`.
+
+Add both keys to the host `Info.plist`. The identifier must match `Bundle.main.bundleIdentifier + ".flutter_daemon.processing"`. Xcode expands `$(PRODUCT_BUNDLE_IDENTIFIER)` to that bundle id.
+
+```xml
+<key>UIBackgroundModes</key>
+<array>
+  <string>processing</string>
+</array>
+<key>BGTaskSchedulerPermittedIdentifiers</key>
+<array>
+  <string>$(PRODUCT_BUNDLE_IDENTIFIER).flutter_daemon.processing</string>
+</array>
+```
+
+A processing task can run for several minutes. The example spends a couple of minutes on network and websocket checks, and iOS may expire the task first. Keep `unmarkBackgroundSync()` in the entrypoint's `finally` block. If the isolate is killed, the plugin deletes the sync lock files itself.
+
+To fire the task in the simulator, pause in the debugger and run:
+
+```text
+e -l objc -- (void)[[BGTaskScheduler sharedScheduler] _simulateLaunchForTaskWithIdentifier:@"com.example.flutterDaemonExample.flutter_daemon.processing"]
+```
+
+Replace the identifier with `<bundle id>.flutter_daemon.processing` for another app.
+
+## Sailfish OS
+
+Background sync is a systemd user timer and a oneshot service. The unit name is the executable name (`flutter_daemon_example` for this example). Units are written to `~/.config/systemd/user/` when `startBackgroundSync` runs.
+
+`elinux/runner/main.cc` must call the plugin before the embedder parses arguments. Without that line, `startBackgroundSync` throws and does not install a unit:
+
+```cpp
+if (FlutterDaemonRunBackground(argc, argv, RegisterPlugins)) return 0;
+```
+
+That runs the `backgroundSync` Dart entrypoint when the process is started with `--background-sync`. A normal launch continues into the window.
+
+```bash
+sfosbuild --network --in-place 5.1.0.11 aarch64 rpm/flutter-daemon.spec
+```
 
 ## Special thanks
 

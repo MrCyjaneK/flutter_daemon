@@ -1,11 +1,8 @@
-import 'dart:io';
+import 'dart:async';
 import 'dart:math';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
-import 'dart:async';
-
-import 'package:flutter/services.dart';
 import 'package:flutter_daemon/flutter_daemon.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:http/http.dart' as http;
@@ -15,24 +12,22 @@ final _flutterDaemonPlugin = FlutterDaemon();
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  print("BACKGROUND SYNC TEST");
   runApp(const MyApp());
 }
 
 Future<void> _checkNetworkLoop() async {
   final wsStop = _testWebSocketConnection();
-  await Future.delayed(const Duration(seconds: 15));
-  await wsStop();
+  await Future<void>.delayed(const Duration(seconds: 15));
+  wsStop();
   for (int i = 0; i < 60; i++) {
     try {
       await _checkNetwork();
     } catch (e) {
-      print("Error checking network: $e");
+      debugPrint('flutter_daemon example: network check failed: $e');
     }
     await Future.delayed(const Duration(seconds: 1));
   }
 }
-
 
 Future<void> _checkNetwork() async {
   final urls = [
@@ -45,94 +40,99 @@ Future<void> _checkNetwork() async {
   final url = urls[Random().nextInt(urls.length)];
   try {
     final response = await http.get(Uri.parse(url));
-    print("Network connection successful (${response.statusCode}) to $url");
+    debugPrint('flutter_daemon example: ${response.statusCode} from $url');
   } catch (e) {
-    print("Error checking network: $url: $e");
+    debugPrint('flutter_daemon example: network check failed for $url: $e');
+  }
+}
+
+@pragma('vm:entry-point')
+Future<void> uninstallBackgroundSync() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  DartPluginRegistrant.ensureInitialized();
+  try {
+    await _flutterDaemonPlugin.stopBackgroundSync();
+  } catch (e) {
+    debugPrint('flutter_daemon example: uninstall background sync failed: $e');
+  } finally {
+    await _flutterDaemonPlugin.signalBackgroundSyncComplete();
   }
 }
 
 @pragma('vm:entry-point')
 Future<void> backgroundSync() async {
+  var acquired = false;
   try {
-    print("Background sync triggered");
-    print("- WidgetsFlutterBinding.ensureInitialized()");
+    debugPrint('flutter_daemon example: background sync triggered');
     WidgetsFlutterBinding.ensureInitialized();
-    print("- DartPluginRegistrant.ensureInitialized()");
     DartPluginRegistrant.ensureInitialized();
-    print("- FlutterDaemon.markBackgroundSync()");
-    final val = await _flutterDaemonPlugin.markBackgroundSync();
-    if (val) {
-      print("Background sync already in progress");
+    final alreadyRunning = await _flutterDaemonPlugin.markBackgroundSync();
+    if (alreadyRunning) {
+      debugPrint('flutter_daemon example: background sync already in progress');
+      await _flutterDaemonPlugin.signalBackgroundSyncComplete();
       return;
     }
-    int tick = 0;
-    int maxTicks = 60;
-    print("path provider test");
+    acquired = true;
     try {
       final path = await getApplicationDocumentsDirectory();
-      print("path: ${path.path}");
+      debugPrint('flutter_daemon example: documents path ${path.path}');
     } catch (e) {
-      print("Error: $e");
+      debugPrint('flutter_daemon example: path provider failed: $e');
     }
     await _checkNetworkLoop();
-
-    while (tick < maxTicks) {
-      print("Tick: ${tick++}");
-      sleep(Duration(seconds: 1));
+    for (var tick = 0; tick < 60; tick++) {
+      debugPrint('flutter_daemon example: tick $tick');
+      await Future<void>.delayed(const Duration(seconds: 1));
       await _checkNetwork();
-      if (tick >= maxTicks) {
-        break;
-      }
     }
-    print("Background sync completed");
+    debugPrint('flutter_daemon example: background sync completed');
   } finally {
-    print("Unmarking background sync");
-    _flutterDaemonPlugin.unmarkBackgroundSync();
+    if (acquired) {
+      await _flutterDaemonPlugin.unmarkBackgroundSync();
+    }
   }
 }
 
-Function _testWebSocketConnection() {
+void Function() _testWebSocketConnection() {
   final wsUrl = Uri.parse('wss://echo.websocket.org');
   WebSocketChannel? channel;
   Timer? timer;
-  
+
   try {
-    // Initialize the connection
     channel = WebSocketChannel.connect(wsUrl);
-    print("WebSocket connection initiated to echo.websocket.org");
-    
-    // Listen for messages from the server
+    debugPrint('flutter_daemon example: websocket connecting');
+
     channel.stream.listen(
       (message) {
-        print("WebSocket echo received: $message");
+        debugPrint('flutter_daemon example: websocket echo: $message');
       },
       onError: (error) {
-        print("WebSocket error: $error");
+        debugPrint('flutter_daemon example: websocket error: $error');
         timer?.cancel();
         channel?.sink.close();
       },
       onDone: () {
-        print("WebSocket connection closed");
+        debugPrint('flutter_daemon example: websocket closed');
         timer?.cancel();
       },
     );
-    
+
     int messageCount = 0;
     timer = Timer.periodic(const Duration(milliseconds: 750), (_) {
       if (channel?.sink != null) {
         final message = "Test message ${messageCount++}";
         channel?.sink.add(message);
-        print("WebSocket message sent: $message");
+        debugPrint('flutter_daemon example: websocket sent: $message');
       }
     });
-    
+
     return () {
-      print("Stopping WebSocket connection test");
+      debugPrint('flutter_daemon example: websocket stopping');
       timer?.cancel();
       channel?.sink.close();
     };
   } catch (e) {
-    print("Error establishing WebSocket connection: $e");
+    debugPrint('flutter_daemon example: websocket failed: $e');
     timer?.cancel();
     channel?.sink.close();
     return () {};
@@ -147,45 +147,80 @@ class MyApp extends StatefulWidget {
 }
 
 class _MyAppState extends State<MyApp> {
-  String _platformVersion = 'Unknown';
+  static const _presetIntervals = [1, 15, 30, 60, 120, 180, 360, 720, 1440];
+
   bool _isSyncActive = false;
   String _statusMessage = '';
   Timer? _statusCheckTimer;
-  int _syncIntervalMinutes = -1;
+  Timer? _batteryPoll;
+  int _syncIntervalMinutes = 15;
   bool _isBatteryOptDisabled = false;
-  
-  // New state variables for constraints
   bool _useUnmeteredNetwork = false;
   bool _requireBatteryNotLow = false;
   bool _requiresCharging = false;
   bool _requiresDeviceIdle = false;
+  FlutterDaemonCapabilities _capabilities = const FlutterDaemonCapabilities(
+    backgroundSync: false,
+    constraints: false,
+    batteryOptimization: false,
+    minimumIntervalMinutes: 1,
+  );
+
+  List<int> get _intervalChoices {
+    final minimum = _capabilities.minimumIntervalMinutes;
+    final choices =
+        _presetIntervals.where((value) => value >= minimum).toList();
+    return choices.isEmpty ? [minimum] : choices;
+  }
 
   @override
   void initState() {
     super.initState();
-    initPlatformState();
+    _loadCapabilities();
     _checkBackgroundSyncStatus();
-    _checkBatteryOptimizationStatus();
-    _loadConstraintSettings();
-
     _flutterDaemonPlugin.getBackgroundSyncInterval().then((value) {
-      setState(() {
-        _syncIntervalMinutes = value ?? -1;
-      });
+      if (!mounted) return;
+      setState(() => _syncIntervalMinutes = _allowedInterval(value));
     });
-
     _statusCheckTimer = Timer.periodic(
         const Duration(seconds: 5), (_) => _checkBackgroundSyncStatus());
   }
-  
-  // Load all constraint settings
+
+  int _allowedInterval(int? minutes) {
+    final choices = _intervalChoices;
+    return minutes != null && choices.contains(minutes)
+        ? minutes
+        : choices.first;
+  }
+
+  Future<void> _loadCapabilities() async {
+    try {
+      final capabilities = await _flutterDaemonPlugin.getCapabilities();
+      if (!mounted) return;
+      setState(() {
+        _capabilities = capabilities;
+        _syncIntervalMinutes = _allowedInterval(_syncIntervalMinutes);
+      });
+      if (capabilities.constraints) {
+        await _loadConstraintSettings();
+      }
+      if (capabilities.batteryOptimization) {
+        await _checkBatteryOptimizationStatus();
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _statusMessage = 'Failed to load capabilities: $e';
+      });
+    }
+  }
+
   Future<void> _loadConstraintSettings() async {
     try {
       final useUnmetered = await _flutterDaemonPlugin.getNetworkType();
       final batteryNotLow = await _flutterDaemonPlugin.getBatteryNotLow();
       final requiresCharging = await _flutterDaemonPlugin.getRequiresCharging();
       final deviceIdle = await _flutterDaemonPlugin.getDeviceIdle();
-      
       if (mounted) {
         setState(() {
           _useUnmeteredNetwork = useUnmetered;
@@ -206,45 +241,25 @@ class _MyAppState extends State<MyApp> {
   @override
   void dispose() {
     _statusCheckTimer?.cancel();
+    _batteryPoll?.cancel();
     super.dispose();
   }
 
-  Future<void> initPlatformState() async {
-    String platformVersion;
-    try {
-      platformVersion = await _flutterDaemonPlugin.getPlatformVersion() ??
-          'Unknown platform version';
-    } on PlatformException {
-      platformVersion = 'Failed to get platform version.';
-    }
-
+  void _showStatus(String message) {
     if (!mounted) return;
-
-    setState(() {
-      _platformVersion = platformVersion;
-    });
+    setState(() => _statusMessage = message);
   }
 
   Future<void> _toggleBackgroundSync() async {
     try {
-      if (_isSyncActive) {
-        final result = await _flutterDaemonPlugin.stopBackgroundSync();
-        setState(() {
-          _statusMessage = result;
-        });
-      } else {
-        final result = await _flutterDaemonPlugin
-            .startBackgroundSync(_syncIntervalMinutes);
-        setState(() {
-          _statusMessage = result;
-        });
-      }
-
+      final result = _isSyncActive
+          ? await _flutterDaemonPlugin.stopBackgroundSync()
+          : await _flutterDaemonPlugin
+              .startBackgroundSync(_allowedInterval(_syncIntervalMinutes));
+      _showStatus(result);
       await _checkBackgroundSyncStatus();
     } catch (e) {
-      setState(() {
-        _statusMessage = 'Error: $e';
-      });
+      _showStatus('Error: $e');
     }
   }
 
@@ -267,7 +282,8 @@ class _MyAppState extends State<MyApp> {
 
   Future<void> _checkBatteryOptimizationStatus() async {
     try {
-      final isDisabled = await _flutterDaemonPlugin.isBatteryOptimizationDisabled();
+      final isDisabled =
+          await _flutterDaemonPlugin.isBatteryOptimizationDisabled();
       if (mounted) {
         setState(() {
           _isBatteryOptDisabled = isDisabled;
@@ -285,14 +301,15 @@ class _MyAppState extends State<MyApp> {
   Future<void> _requestDisableBatteryOptimization() async {
     try {
       await _flutterDaemonPlugin.requestDisableBatteryOptimization();
-      for (int i = 0; i < 4 * 60; i++) {
-        await _checkBatteryOptimizationStatus();
-        await Future.delayed(const Duration(milliseconds: 250));
-      }
-    } catch (e) {
-      setState(() {
-        _statusMessage = 'Error requesting battery optimization: $e';
+      _batteryPoll?.cancel();
+      var remaining = 60;
+      _batteryPoll = Timer.periodic(const Duration(seconds: 1), (timer) {
+        remaining -= 1;
+        _checkBatteryOptimizationStatus();
+        if (remaining <= 0 || _isBatteryOptDisabled) timer.cancel();
       });
+    } catch (e) {
+      _showStatus('Error requesting battery optimization: $e');
     }
   }
 
@@ -300,10 +317,52 @@ class _MyAppState extends State<MyApp> {
     try {
       await _flutterDaemonPlugin.openBatteryOptimizationSettings();
     } catch (e) {
-      setState(() {
-        _statusMessage = 'Error opening battery settings: $e';
-      });
+      _showStatus('Error opening battery settings: $e');
     }
+  }
+
+  String _intervalLabel(int minutes) {
+    final hours = (minutes ~/ 60).toString().padLeft(2, '0');
+    final mins = (minutes % 60).toString().padLeft(2, '0');
+    return '${hours}h${mins}m';
+  }
+
+  Widget _statusDot(bool on, String label) {
+    return Row(
+      children: [
+        Container(
+          width: 12,
+          height: 12,
+          decoration: BoxDecoration(
+            color: on ? Colors.green : Colors.red,
+            shape: BoxShape.circle,
+          ),
+        ),
+        const SizedBox(width: 8),
+        Text(label, style: Theme.of(context).textTheme.bodyLarge),
+      ],
+    );
+  }
+
+  Widget _constraint(
+    String title,
+    String subtitle,
+    bool value,
+    Future<bool> Function(bool value) apply,
+    void Function(bool value) store,
+  ) {
+    return SwitchListTile(
+      title: Text(title),
+      subtitle: Text(subtitle),
+      value: value,
+      onChanged: (next) async {
+        try {
+          if (await apply(next) && mounted) setState(() => store(next));
+        } catch (e) {
+          _showStatus('Failed to update constraint: $e');
+        }
+      },
+    );
   }
 
   @override
@@ -319,30 +378,11 @@ class _MyAppState extends State<MyApp> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                    'Running on: $_platformVersion every $_syncIntervalMinutes minutes',
-                    style: Theme.of(context).textTheme.titleMedium),
-                const SizedBox(height: 24),
                 Text('Background Sync Status',
                     style: Theme.of(context).textTheme.titleLarge),
                 const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Container(
-                      width: 12,
-                      height: 12,
-                      decoration: BoxDecoration(
-                        color: _isSyncActive ? Colors.green : Colors.red,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      _isSyncActive ? 'Active' : 'Inactive',
-                      style: Theme.of(context).textTheme.bodyLarge,
-                    ),
-                  ],
-                ),
+                _statusDot(
+                    _isSyncActive, _isSyncActive ? 'Active' : 'Inactive'),
                 if (_statusMessage.isNotEmpty)
                   Padding(
                     padding: const EdgeInsets.only(top: 8.0),
@@ -350,111 +390,67 @@ class _MyAppState extends State<MyApp> {
                         style: const TextStyle(color: Colors.blue)),
                   ),
                 const SizedBox(height: 16),
-                Row(
-                  children: [
-                    Text('Sync Interval (minutes): '),
-                    SizedBox(width: 8),
-                    DropdownButton<int>(
-                      value: _syncIntervalMinutes,
-                      items:
-                          [-1, 15, 30, 60, 120, 180, 360, 720, 1440].map((int value) {
-                        return DropdownMenuItem<int>(
-                          value: value,
-                          child: Text(
-                              '${(value ~/ 60).toString().padLeft(2, '0')}h${(value % 60).toString().padLeft(2, '0')}m'),
-                        );
-                      }).toList(),
-                      onChanged: (newValue) {
-                        if (newValue != null) {
-                          setState(() {
-                            _syncIntervalMinutes = newValue;
-                          });
-                        }
-                      },
-                    ),
+                DropdownButton<int>(
+                  value: _allowedInterval(_syncIntervalMinutes),
+                  items: [
+                    for (final minutes in _intervalChoices)
+                      DropdownMenuItem(
+                        value: minutes,
+                        child: Text(_intervalLabel(minutes)),
+                      ),
                   ],
+                  onChanged: (minutes) {
+                    if (minutes != null) {
+                      setState(() => _syncIntervalMinutes = minutes);
+                    }
+                  },
                 ),
                 const SizedBox(height: 24),
-                
-                // Add new section for Work Constraints
-                Text('Work Constraints',
-                    style: Theme.of(context).textTheme.titleLarge),
-                const SizedBox(height: 8),
-                
-                // Network Type
-                SwitchListTile(
-                  title: const Text('Require Unmetered Network'),
-                  subtitle: const Text('Only run on Wi-Fi or unmetered connections'),
-                  value: _useUnmeteredNetwork,
-                  onChanged: (value) async {
-                    final success = await _flutterDaemonPlugin.setNetworkType(value);
-                    if (success && mounted) {
-                      setState(() {
-                        _useUnmeteredNetwork = value;
-                      });
-                    }
-                  },
-                ),
-                
-                // Battery Not Low
-                SwitchListTile(
-                  title: const Text('Require Battery Not Low'),
-                  subtitle: const Text('Skip when device is in low battery mode'),
-                  value: _requireBatteryNotLow,
-                  onChanged: (value) async {
-                    final success = await _flutterDaemonPlugin.setBatteryNotLow(value);
-                    if (success && mounted) {
-                      setState(() {
-                        _requireBatteryNotLow = value;
-                      });
-                    }
-                  },
-                ),
-                
-                // Requires Charging
-                SwitchListTile(
-                  title: const Text('Require Charging'),
-                  subtitle: const Text('Only run when device is charging'),
-                  value: _requiresCharging,
-                  onChanged: (value) async {
-                    final success = await _flutterDaemonPlugin.setRequiresCharging(value);
-                    if (success && mounted) {
-                      setState(() {
-                        _requiresCharging = value;
-                      });
-                    }
-                  },
-                ),
-                
-                // Device Idle
-                SwitchListTile(
-                  title: const Text('Require Device Idle'),
-                  subtitle: const Text('Only run when device is idle'),
-                  value: _requiresDeviceIdle,
-                  onChanged: (value) async {
-                    final success = await _flutterDaemonPlugin.setDeviceIdle(value);
-                    if (success && mounted) {
-                      setState(() {
-                        _requiresDeviceIdle = value;
-                      });
-                    }
-                  },
-                ),
-                
-                // Refresh constraints button
-                OutlinedButton(
-                  onPressed: _loadConstraintSettings,
-                  child: const Text('Refresh Constraint Settings'),
-                ),
-                
+                if (_capabilities.constraints) ...[
+                  Text('Work Constraints',
+                      style: Theme.of(context).textTheme.titleLarge),
+                  const SizedBox(height: 8),
+                  _constraint(
+                    'Require Unmetered Network',
+                    'Only run on Wi-Fi or unmetered connections',
+                    _useUnmeteredNetwork,
+                    _flutterDaemonPlugin.setNetworkType,
+                    (value) => _useUnmeteredNetwork = value,
+                  ),
+                  _constraint(
+                    'Require Battery Not Low',
+                    'Skip when device is in low battery mode',
+                    _requireBatteryNotLow,
+                    _flutterDaemonPlugin.setBatteryNotLow,
+                    (value) => _requireBatteryNotLow = value,
+                  ),
+                  _constraint(
+                    'Require Charging',
+                    'Only run when device is charging',
+                    _requiresCharging,
+                    _flutterDaemonPlugin.setRequiresCharging,
+                    (value) => _requiresCharging = value,
+                  ),
+                  _constraint(
+                    'Require Device Idle',
+                    'Only run when device is idle',
+                    _requiresDeviceIdle,
+                    _flutterDaemonPlugin.setDeviceIdle,
+                    (value) => _requiresDeviceIdle = value,
+                  ),
+                  OutlinedButton(
+                    onPressed: _loadConstraintSettings,
+                    child: const Text('Refresh Constraint Settings'),
+                  ),
+                ],
                 const SizedBox(height: 24),
                 ElevatedButton(
                   onPressed: _toggleBackgroundSync,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: _isSyncActive ? Colors.red : Colors.green,
                     foregroundColor: Colors.white,
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 24, vertical: 12),
                   ),
                   child: Text(_isSyncActive
                       ? 'Stop Background Sync'
@@ -465,44 +461,31 @@ class _MyAppState extends State<MyApp> {
                   onPressed: _checkBackgroundSyncStatus,
                   child: const Text('Refresh Status'),
                 ),
-                
-                // Rest of the existing UI...
-                const SizedBox(height: 24),
-                Text('Battery Optimization',
-                    style: Theme.of(context).textTheme.titleLarge),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Container(
-                      width: 12,
-                      height: 12,
-                      decoration: BoxDecoration(
-                        color: _isBatteryOptDisabled ? Colors.green : Colors.red,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      _isBatteryOptDisabled ? 'Disabled' : 'Enabled',
-                      style: Theme.of(context).textTheme.bodyLarge,
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                ElevatedButton(
-                  onPressed: _requestDisableBatteryOptimization,
-                  child: const Text('Request Disable Battery Optimization'),
-                ),
-                const SizedBox(height: 8),
-                OutlinedButton(
-                  onPressed: _openBatteryOptimizationSettings,
-                  child: const Text('Open Battery Settings'),
-                ),
-                const SizedBox(height: 8),
-                OutlinedButton(
-                  onPressed: _checkBatteryOptimizationStatus,
-                  child: const Text('Refresh Battery Status'),
-                ),
+                if (_capabilities.batteryOptimization) ...[
+                  const SizedBox(height: 24),
+                  Text('Battery Optimization',
+                      style: Theme.of(context).textTheme.titleLarge),
+                  const SizedBox(height: 8),
+                  _statusDot(
+                    _isBatteryOptDisabled,
+                    _isBatteryOptDisabled ? 'Disabled' : 'Enabled',
+                  ),
+                  const SizedBox(height: 16),
+                  ElevatedButton(
+                    onPressed: _requestDisableBatteryOptimization,
+                    child: const Text('Request Disable Battery Optimization'),
+                  ),
+                  const SizedBox(height: 8),
+                  OutlinedButton(
+                    onPressed: _openBatteryOptimizationSettings,
+                    child: const Text('Open Battery Settings'),
+                  ),
+                  const SizedBox(height: 8),
+                  OutlinedButton(
+                    onPressed: _checkBatteryOptimizationStatus,
+                    child: const Text('Refresh Battery Status'),
+                  ),
+                ],
               ],
             ),
           ),

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Flutter Daemon
+Comment=Background task example on Sailfish OS
+Icon=icon-m-developer-mode
+Exec=flutter-daemon
+X-Nemo-Application-Type=generic
+
+[X-Sailjail]
+Sandboxing=Disabled
