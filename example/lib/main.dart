@@ -47,6 +47,19 @@ Future<void> _checkNetwork() async {
 }
 
 @pragma('vm:entry-point')
+Future<void> uninstallBackgroundSync() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  DartPluginRegistrant.ensureInitialized();
+  try {
+    await _flutterDaemonPlugin.stopBackgroundSync();
+  } catch (e) {
+    debugPrint('flutter_daemon example: uninstall background sync failed: $e');
+  } finally {
+    await _flutterDaemonPlugin.signalBackgroundSyncComplete();
+  }
+}
+
+@pragma('vm:entry-point')
 Future<void> backgroundSync() async {
   var acquired = false;
   try {

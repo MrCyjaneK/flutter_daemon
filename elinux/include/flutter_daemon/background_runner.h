@@ -7,15 +7,12 @@
 
 #include <chrono>
 #include <cstdint>
-#include <cerrno>
 #include <cstdlib>
-#include <cstring>
 #include <dirent.h>
 #include <fstream>
 #include <iostream>
 #include <iterator>
 #include <string>
-#include <sys/wait.h>
 #include <thread>
 #include <unistd.h>
 #include <vector>
@@ -30,7 +27,8 @@
 // Returns non-zero when this process was started with --background-sync or
 // --uninstall-background-sync and the call handled it. Returns 0 for a normal
 // GUI launch, after recording that the hook ran. --uninstall-background-sync
-// removes this user's timer and service without starting Flutter.
+// runs the uninstallBackgroundSync Dart entrypoint, which calls
+// stopBackgroundSync.
 
 using FlutterDaemonRegisterPlugins = void (*)(flutter::PluginRegistry*);
 
@@ -64,82 +62,6 @@ inline bool IsBackgroundInvocation(int argc, char** argv) {
 
 inline bool IsUninstallInvocation(int argc, char** argv) {
   return HasArgument(argc, argv, "--uninstall-background-sync");
-}
-
-inline bool IsUnitNameChar(unsigned char c) {
-  return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
-         (c >= '0' && c <= '9') || c == ':' || c == '_' || c == '.' ||
-         c == '-';
-}
-
-inline std::string BaseName(const std::string& path) {
-  const auto slash = path.find_last_of('/');
-  if (slash == std::string::npos) {
-    return path;
-  }
-  return path.substr(slash + 1);
-}
-
-// Same sanitization as ElinuxBackgroundSync._appId.
-inline std::string BackgroundAppId() {
-  const std::string name = BaseName(flutter_daemon::ReadLink("/proc/self/exe"));
-  std::string sanitized;
-  sanitized.reserve(name.size());
-  for (size_t i = 0; i < name.size(); ++i) {
-    const unsigned char c = static_cast<unsigned char>(name[i]);
-    sanitized.push_back(IsUnitNameChar(c) ? static_cast<char>(c) : '-');
-  }
-  if (sanitized.empty()) {
-    return "flutter-daemon";
-  }
-  return sanitized;
-}
-
-inline void RunUserSystemctl(const std::vector<std::string>& args) {
-  std::vector<std::string> command;
-  command.reserve(args.size() + 2);
-  command.emplace_back("/usr/bin/systemctl");
-  command.emplace_back("--user");
-  command.insert(command.end(), args.begin(), args.end());
-
-  std::vector<char*> argv;
-  argv.reserve(command.size() + 1);
-  for (std::string& arg : command) {
-    argv.push_back(&arg[0]);
-  }
-  argv.push_back(nullptr);
-
-  const pid_t pid = ::fork();
-  if (pid < 0) {
-    return;
-  }
-  if (pid == 0) {
-    ::execv("/usr/bin/systemctl", argv.data());
-    _exit(127);
-  }
-  int status = 0;
-  while (::waitpid(pid, &status, 0) < 0 && errno == EINTR) {
-  }
-}
-
-inline void DeleteFile(const std::string& path) {
-  ::unlink(path.c_str());
-}
-
-// Current user only. systemctl failures are ignored, and the three unit files
-// are removed even when the user bus is down.
-inline void UninstallBackgroundUnits() {
-  const std::string id = BackgroundAppId();
-  RunUserSystemctl({"disable", "--now", id + ".timer"});
-  RunUserSystemctl({"stop", id + ".service"});
-  const char* home = std::getenv("HOME");
-  if (home != nullptr && home[0] != '\0') {
-    const std::string root(home);
-    DeleteFile(root + "/.config/systemd/user/" + id + ".service");
-    DeleteFile(root + "/.config/systemd/user/" + id + ".timer");
-    DeleteFile(root + "/.config/" + id + "/flutter_daemon.conf");
-  }
-  RunUserSystemctl({"daemon-reload"});
 }
 
 inline bool CmdlineRequestsBackgroundSync(const std::string& path) {
@@ -228,18 +150,19 @@ class EngineRegistry : public flutter::PluginRegistry {
 };
 
 inline bool RunHeadless(const std::wstring& bundle,
-                        FlutterDaemonRegisterPlugins register_plugins) {
+                        FlutterDaemonRegisterPlugins register_plugins,
+                        const char* entrypoint) {
   flutter::DartProject project(bundle);
   flutter::FlutterEngine engine(project);
   if (register_plugins != nullptr) {
     register_plugins(&engine);
   }
-  if (!engine.Run("backgroundSync")) {
-    std::cerr << "flutter_daemon: headless FlutterEngine::Run failed"
-              << std::endl;
+  if (!engine.Run(entrypoint)) {
+    std::cerr << "flutter_daemon: headless FlutterEngine::Run failed for "
+              << entrypoint << std::endl;
     return false;
   }
-  std::cerr << "flutter_daemon: running backgroundSync" << std::endl;
+  std::cerr << "flutter_daemon: running " << entrypoint << std::endl;
   PumpUntilFinished([&engine]() { return engine.ProcessMessages(); },
                     []() { return true; });
   engine.ShutDown();
@@ -324,7 +247,11 @@ inline int FlutterDaemonRunBackground(int argc, char** argv,
                                       FlutterDaemonRegisterPlugins register_plugins) {
   FlutterDaemonMarkRunnerHook();
   if (flutter_daemon_internal::IsUninstallInvocation(argc, argv)) {
-    flutter_daemon_internal::UninstallBackgroundUnits();
+    FlutterDaemonResetBackgroundSyncFinished();
+    const std::wstring bundle = flutter_daemon_internal::Widen(
+        flutter_daemon_internal::BundlePath(argc, argv));
+    flutter_daemon_internal::RunHeadless(bundle, register_plugins,
+                                         "uninstallBackgroundSync");
     return 1;
   }
   if (!flutter_daemon_internal::IsBackgroundInvocation(argc, argv)) {
@@ -339,7 +266,8 @@ inline int FlutterDaemonRunBackground(int argc, char** argv,
   }
   const std::wstring bundle =
       flutter_daemon_internal::Widen(flutter_daemon_internal::BundlePath(argc, argv));
-  if (flutter_daemon_internal::RunHeadless(bundle, register_plugins)) {
+  if (flutter_daemon_internal::RunHeadless(bundle, register_plugins,
+                                           "backgroundSync")) {
     return 1;
   }
   std::cerr << "flutter_daemon: retrying backgroundSync with a 1x1 view"
