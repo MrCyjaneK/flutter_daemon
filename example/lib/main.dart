@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math';
 import 'dart:ui';
 
@@ -10,8 +11,53 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 
 final _flutterDaemonPlugin = FlutterDaemon();
 
+String get _backgroundLogPath =>
+    '${Directory.systemTemp.path}/flutter_daemon_example/background.log';
+
+void _log(String message) {
+  final line = '${DateTime.now().toIso8601String()} pid=$pid $message';
+  debugPrint('flutter_daemon example: $message');
+  try {
+    stdout.writeln('flutter_daemon example: $line');
+    stdout.flush();
+  } catch (_) {}
+  try {
+    final file = File(_backgroundLogPath);
+    file.parent.createSync(recursive: true);
+    file.writeAsStringSync('$line\n', mode: FileMode.append, flush: true);
+    _trimLog(file);
+  } catch (e) {
+    debugPrint(
+      'flutter_daemon example: failed to write $_backgroundLogPath: $e',
+    );
+  }
+}
+
+void _trimLog(File file) {
+  const maxBytes = 64 * 1024;
+  final length = file.lengthSync();
+  if (length <= maxBytes) return;
+  final tail = file.readAsBytesSync().sublist(length - (maxBytes ~/ 2));
+  final newline = tail.indexOf(0x0a);
+  file.writeAsBytesSync(
+    newline == -1 ? tail : tail.sublist(newline + 1),
+    flush: true,
+  );
+}
+
+String _readBackgroundLog() {
+  try {
+    final file = File(_backgroundLogPath);
+    if (!file.existsSync()) return '';
+    return file.readAsStringSync();
+  } catch (e) {
+    return 'Failed to read $_backgroundLogPath: $e';
+  }
+}
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  _log('example started');
   runApp(const MyApp());
 }
 
@@ -23,7 +69,7 @@ Future<void> _checkNetworkLoop() async {
     try {
       await _checkNetwork();
     } catch (e) {
-      debugPrint('flutter_daemon example: network check failed: $e');
+      _log('network check failed: $e');
     }
     await Future.delayed(const Duration(seconds: 1));
   }
@@ -40,9 +86,9 @@ Future<void> _checkNetwork() async {
   final url = urls[Random().nextInt(urls.length)];
   try {
     final response = await http.get(Uri.parse(url));
-    debugPrint('flutter_daemon example: ${response.statusCode} from $url');
+    _log('${response.statusCode} from $url');
   } catch (e) {
-    debugPrint('flutter_daemon example: network check failed for $url: $e');
+    _log('network check failed for $url: $e');
   }
 }
 
@@ -50,10 +96,11 @@ Future<void> _checkNetwork() async {
 Future<void> uninstallBackgroundSync() async {
   WidgetsFlutterBinding.ensureInitialized();
   DartPluginRegistrant.ensureInitialized();
+  _log('uninstall background sync triggered');
   try {
     await _flutterDaemonPlugin.stopBackgroundSync();
   } catch (e) {
-    debugPrint('flutter_daemon example: uninstall background sync failed: $e');
+    _log('uninstall background sync failed: $e');
   } finally {
     await _flutterDaemonPlugin.signalBackgroundSyncComplete();
   }
@@ -63,31 +110,35 @@ Future<void> uninstallBackgroundSync() async {
 Future<void> backgroundSync() async {
   var acquired = false;
   try {
-    debugPrint('flutter_daemon example: background sync triggered');
     WidgetsFlutterBinding.ensureInitialized();
     DartPluginRegistrant.ensureInitialized();
+    _log('background sync triggered, writing $_backgroundLogPath');
     final alreadyRunning = await _flutterDaemonPlugin.markBackgroundSync();
     if (alreadyRunning) {
-      debugPrint('flutter_daemon example: background sync already in progress');
+      _log('background sync already in progress');
       await _flutterDaemonPlugin.signalBackgroundSyncComplete();
       return;
     }
     acquired = true;
     try {
       final path = await getApplicationDocumentsDirectory();
-      debugPrint('flutter_daemon example: documents path ${path.path}');
+      _log('documents path ${path.path}');
     } catch (e) {
-      debugPrint('flutter_daemon example: path provider failed: $e');
+      _log('path provider failed: $e');
     }
     await _checkNetworkLoop();
     for (var tick = 0; tick < 60; tick++) {
-      debugPrint('flutter_daemon example: tick $tick');
+      _log('tick $tick');
       await Future<void>.delayed(const Duration(seconds: 1));
       await _checkNetwork();
     }
-    debugPrint('flutter_daemon example: background sync completed');
+    _log('background sync completed');
+  } catch (e, stack) {
+    _log('background sync failed: $e\n$stack');
+    rethrow;
   } finally {
     if (acquired) {
+      _log('releasing background sync lock');
       await _flutterDaemonPlugin.unmarkBackgroundSync();
     }
   }
@@ -100,19 +151,19 @@ void Function() _testWebSocketConnection() {
 
   try {
     channel = WebSocketChannel.connect(wsUrl);
-    debugPrint('flutter_daemon example: websocket connecting');
+    _log('websocket connecting');
 
     channel.stream.listen(
       (message) {
-        debugPrint('flutter_daemon example: websocket echo: $message');
+        _log('websocket echo: $message');
       },
       onError: (error) {
-        debugPrint('flutter_daemon example: websocket error: $error');
+        _log('websocket error: $error');
         timer?.cancel();
         channel?.sink.close();
       },
       onDone: () {
-        debugPrint('flutter_daemon example: websocket closed');
+        _log('websocket closed');
         timer?.cancel();
       },
     );
@@ -122,17 +173,17 @@ void Function() _testWebSocketConnection() {
       if (channel?.sink != null) {
         final message = "Test message ${messageCount++}";
         channel?.sink.add(message);
-        debugPrint('flutter_daemon example: websocket sent: $message');
+        _log('websocket sent: $message');
       }
     });
 
     return () {
-      debugPrint('flutter_daemon example: websocket stopping');
+      _log('websocket stopping');
       timer?.cancel();
       channel?.sink.close();
     };
   } catch (e) {
-    debugPrint('flutter_daemon example: websocket failed: $e');
+    _log('websocket failed: $e');
     timer?.cancel();
     channel?.sink.close();
     return () {};
@@ -159,6 +210,7 @@ class _MyAppState extends State<MyApp> {
   bool _requireBatteryNotLow = false;
   bool _requiresCharging = false;
   bool _requiresDeviceIdle = false;
+  String _logText = '';
   FlutterDaemonCapabilities _capabilities = const FlutterDaemonCapabilities(
     backgroundSync: false,
     constraints: false,
@@ -178,12 +230,30 @@ class _MyAppState extends State<MyApp> {
     super.initState();
     _loadCapabilities();
     _checkBackgroundSyncStatus();
+    _loadLog();
     _flutterDaemonPlugin.getBackgroundSyncInterval().then((value) {
       if (!mounted) return;
       setState(() => _syncIntervalMinutes = _allowedInterval(value));
     });
-    _statusCheckTimer = Timer.periodic(
-        const Duration(seconds: 5), (_) => _checkBackgroundSyncStatus());
+    _statusCheckTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+      _checkBackgroundSyncStatus();
+      _loadLog();
+    });
+  }
+
+  void _loadLog() {
+    final text = _readBackgroundLog();
+    if (!mounted || text == _logText) return;
+    setState(() => _logText = text);
+  }
+
+  void _clearLog() {
+    try {
+      final file = File(_backgroundLogPath);
+      if (file.existsSync()) file.deleteSync();
+    } catch (_) {}
+    if (!mounted) return;
+    setState(() => _logText = '');
   }
 
   int _allowedInterval(int? minutes) {
@@ -251,15 +321,22 @@ class _MyAppState extends State<MyApp> {
   }
 
   Future<void> _toggleBackgroundSync() async {
+    final interval = _allowedInterval(_syncIntervalMinutes);
     try {
+      _log(_isSyncActive
+          ? 'stopping background sync'
+          : 'starting background sync every $interval minutes');
       final result = _isSyncActive
           ? await _flutterDaemonPlugin.stopBackgroundSync()
-          : await _flutterDaemonPlugin
-              .startBackgroundSync(_allowedInterval(_syncIntervalMinutes));
+          : await _flutterDaemonPlugin.startBackgroundSync(interval);
+      _log(result);
       _showStatus(result);
       await _checkBackgroundSyncStatus();
+      _loadLog();
     } catch (e) {
+      _log('background sync toggle failed: $e');
       _showStatus('Error: $e');
+      _loadLog();
     }
   }
 
@@ -486,6 +563,15 @@ class _MyAppState extends State<MyApp> {
                     child: const Text('Refresh Battery Status'),
                   ),
                 ],
+                const SizedBox(height: 24),
+                Text('Sync Log', style: Theme.of(context).textTheme.titleLarge),
+                const SizedBox(height: 8),
+                OutlinedButton(
+                  onPressed: _clearLog,
+                  child: const Text('Clear Logs'),
+                ),
+                const SizedBox(height: 8),
+                SelectableText(_logText.isEmpty ? 'No log yet.' : _logText),
               ],
             ),
           ),
